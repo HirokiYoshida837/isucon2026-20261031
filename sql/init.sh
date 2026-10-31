@@ -36,4 +36,6 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--file=91-delete-post-func.sql \
 	--file=92-drop-redundant-index.sql \
 	--file=93-image-unlogged.sql \
-	--file=94-vacuum-users.sql
+	--file=94-block-func.sql \
+	--file=95-open-posting-window-func.sql \
+	--file=96-vacuum-users.sql
