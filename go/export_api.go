@@ -70,20 +70,6 @@ func exportPostsHandler(h *HandlerContext) echo.HandlerFunc {
 			}
 		}
 
-		if len(posts) > 0 {
-			author := posts[0].Author
-			if author.setImageKey() == nil {
-				reqs := make([]sigReq, 0, len(posts)+1)
-				for _, post := range posts {
-					reqs = append(reqs, sigReq{key: author.ImageKey, imageID: post.ImageID})
-				}
-				if author.ProfileImageID != nil {
-					reqs = append(reqs, sigReq{key: author.ImageKey, imageID: *author.ProfileImageID})
-				}
-				prewarmSigs(ctx, reqs)
-			}
-		}
-
 		var body bytes.Buffer
 		writer := zip.NewWriter(&body)
 		defer writer.Close()
