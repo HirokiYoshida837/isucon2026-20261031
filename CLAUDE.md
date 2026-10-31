@@ -66,13 +66,13 @@
 - サーバー上の git 更新は `git pull` ではなく `gh repo sync` を使う（`ssh asia1 'cd ~/webapp && gh repo sync --branch main'`）
 - 手元ではブランチを切って PR にする。サーバーへの反映は PR のマージ後か、`REF` を指定したデプロイで行う
 - 各サーバーの `~/Makefile` は `~/webapp/Makefile` に転送するだけの wrapper。git 管理しないので、無ければ各自が ssh で置く（中身は下）
-  ```
-  .DEFAULT_GOAL := all.restart
-  Makefile: ;
-  %:
-  	@$(MAKE) --no-print-directory -C $(HOME)/webapp $@
-  ```
-  - `%:` の下のレシピ行はタブインデント
+```
+.DEFAULT_GOAL := all.restart
+Makefile: ;
+%:
+	@$(MAKE) --no-print-directory -C $(HOME)/webapp $@
+```
+- `%:` の下のレシピ行はタブインデント
 - サーバーの `~` で打つコマンド
   - `make deploy REF=<ブランチ名>`: ブランチをデプロイ（ビルドと再起動）
   - `make deploy REF=<PR 番号>`: PR をデプロイ
