@@ -22,13 +22,13 @@
 | 10-31 07:45 | asia1 / europe1 / america1 | `isureal-go.service.d/loglevel.conf`（`Environment=ISUREAL_LOG_LEVEL=error`。daemon-reload 済み、**次の restart / deploy から効く**） | アクションログを 5xx だけに（asia1 で 5 分 1.3 万行 → ほぼ 0。IP BAN はアプリ内判定なので journald は読まれていない） | `sudo rm /etc/systemd/system/isureal-go.service.d/loglevel.conf && sudo systemctl daemon-reload && sudo systemctl restart isureal-go` |
 | 10-31 07:45 | asia2 | PostgreSQL `conf.d/97-log-off.conf`（reload 済み） | `log_checkpoints = off` | `sudo rm /etc/postgresql/16/main/conf.d/97-log-off.conf && sudo systemctl reload postgresql` |
 | 10-31 07:45 | asia2 | PostgreSQL `conf.d/99-wal.conf`（#234 / PR #254。reload 済み） | `wal_writer_delay 10ms`・`wal_writer_flush_after 8MB` は反映済み。`wal_buffers 128MB` は **pending_restart**（再起動試験の reboot で効く） | `sudo rm /etc/postgresql/16/main/conf.d/99-wal.conf && sudo systemctl restart postgresql` |
+| 10-31 07:52 | asia1 | `env.sh` に `ISUREAL_IMAGE_CACHE_MB=512`（#260 の意図。RSS が 2.7GB まで伸びていた）+ isureal-go restart（loglevel.conf もこの restart で有効化） | 起動直後 RSS 44MB、`GET /` 200、journald 10 秒で 0 行 | `env.sh.bak-20261031-imgcache` に戻して restart（env.sh の中身は表示しない） |
 
 ## 未適用
 - asia2 PostgreSQL `conf.d/96-log-params.conf`（`log_parameter_max_length = 256`）: スロークエリログを再び有効にするときだけ必要（07:12 にログ自体を止めたので今は不要）
 - asia2 PostgreSQL `conf.d/99-wal.conf`（#234）: 07:45 に配置・reload 済み。`wal_buffers 128MB` だけ PostgreSQL の restart 待ち（上の表）
 - isureal-go の GC 設定（#92 / PR #97 はマージ済みだが未配置）: `gc.conf`（GOGC=200、GOMEMLIMIT=2GiB）。**asia1 には今のままでは当てない**（07:40 時点で isureal の RSS 2.4GB・HWM 2.5GB。GOMEMLIMIT=2GiB だと GC が回り続けて CPU を食う。GOGC=200 はヒープを増やす方向で OOM に近づく）。europe1 / america1 は RSS 600MB で当てられるが CPU は暇なので効果は小さい
-- asia1 の `ISUREAL_IMAGE_CACHE_MB=512`（#258 / PR #260 はマージ済みだが env.sh に未記載）: asia1 の空きメモリは 07:40 で 824MB・swap 無し。入れるなら env.sh に 1 行足して isureal-go を restart（restart は人の OK 待ち）
-- asia2 `max_wal_size`（99- で 4GB）・`checkpoint_timeout`（15min）: `checkpoints_req 42 > checkpoints_timed 32` で WAL 量起因のチェックポイントが多い。pg_wal は 4.1GB。`max_wal_size 12GB` / `checkpoint_timeout 30min` は reload で効く候補（full page write の WAL が減る）。ベンチ前後の `pg_stat_wal.wal_bytes` を見てから
+- asia2 `max_wal_size`（99- で 4GB）・`checkpoint_timeout`（15min）: `checkpoints_req 42 > checkpoints_timed 32` で WAL 量起因のチェックポイントが多い。pg_wal は 4.1GB。07:46 のベンチで WAL は 1.8GB、WAL 起因のチェックポイントは増えなかった（req 42 のまま）ので当てていない
 - rsyslog（4 台）: journald の転送は止めてあるので syslog への書き込みは systemd のセッション行だけ（毎分数行）。止める利益が小さいので触っていない
 - なし（C2 `tcp_tw_reuse=1` はベンチ後の TIME_WAIT を見て判断）
 
