@@ -46,84 +46,62 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusBadRequest, "invalid_pagination")
 		}
 		ctx := c.Request().Context()
-		// 友達の全辺（FriendsOfFriends / MutualFriends）はどのフィードでも読まない。
-		// friends-of-friends は共通の友達数・スコアを SQL で出す（friendsOfFriendsFeed）。
-		// following は友達の友達の判定を SQL（EXISTS）で行う。public は SQL で visibility='public' に絞られ、
-		// friends は著者が友達なので canView は Friends だけで通る
-		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, false)
-		if errors.Is(err, sql.ErrNoRows) {
-			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
-		}
-		if err != nil {
-			return err
-		}
-		following := map[string]bool{}
-		beforePostedAt, beforeID := input.BeforePostedAt, input.BeforeID
-		// canView / matchesFeed と同じ絞り込みを SQL に寄せる（Go 側の判定も残す）。
-		// 今日投稿していない人は自分以外の投稿を見られない
-		if !viewer.HasPostedToday {
-			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
-		}
-		blocked := make([]string, 0, len(viewer.Blocked))
-		for id := range viewer.Blocked {
-			blocked = append(blocked, id)
-		}
+		viewerID := GetSession(c).UserID
 		if ranked {
+			// 友達の全辺（FriendsOfFriends / MutualFriends）は読まない。共通の友達数・スコアは SQL で出す
+			viewer, err := loadViewerContext(ctx, h.DB, viewerID, false)
+			if errors.Is(err, sql.ErrNoRows) {
+				return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
+			}
+			if err != nil {
+				return err
+			}
+			if !viewer.HasPostedToday {
+				return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
+			}
+			blocked := make([]string, 0, len(viewer.Blocked))
+			for id := range viewer.Blocked {
+				blocked = append(blocked, id)
+			}
 			return friendsOfFriendsFeed(c, h.DB, viewer, blocked, input)
 		}
+		// friends / public / following は canView && matchesFeed と同じ絞り込みを SQL 1 本で行う（#173）。
+		// 閲覧者が active で今日投稿したか・ブロック・友達も副問い合わせで引くので、DB との往復は 1 回。
+		// 退会した人・今日投稿していない人は 0 件になり、200 で空の配列を返す（loadViewerContext のときと同じ）
+		const friendIDs = `ARRAY(SELECT friend_id FROM friend_edges WHERE user_id = $1)`
 		conditions := `
    AND p.author_id <> $1 AND w.ended_at IS NULL
    AND ($2::timestamptz IS NULL OR (p.posted_at, p.id) < ($2, $3))
-   AND p.author_id <> ALL($4::text[])
+   AND EXISTS(
+     SELECT 1 FROM users vu
+     JOIN posting_windows cur ON cur.region = vu.region AND cur.ended_at IS NULL
+     JOIN posts vp ON vp.author_id = vu.id AND vp.local_date = cur.local_date AND vp.deleted_at IS NULL
+     WHERE vu.id = $1 AND vu.status = 'active')
+   AND p.author_id <> ALL(ARRAY(
+     SELECT CASE WHEN blocker_id = $1 THEN blocked_id ELSE blocker_id END
+     FROM block_relations WHERE blocker_id = $1 OR blocked_id = $1))
    AND p.visibility IN ('public', 'friends', 'friends_of_friends')`
-		args := []any{viewer.ID, beforePostedAt, beforeID, blocked}
-		limit := ""
-		authors := make([]string, 0)
 		switch input.Feed {
 		case "public":
 			conditions += ` AND p.visibility = 'public'`
-			limit = " LIMIT 51" // SQL の条件が canView && matchesFeed と一致するので先頭 51 件で足りる
 		case "friends":
-			for id := range viewer.Friends {
-				authors = append(authors, id)
-			}
-			limit = " LIMIT 51"
+			conditions += ` AND p.author_id = ANY(` + friendIDs + `)`
 		case "following":
-			// フォロー先の取得と canView の公開範囲判定（友達の友達は friend_edges の EXISTS）を SQL に寄せる。
-			// ranked ではなく SQL の条件が canView && matchesFeed と一致するので、Go 側の判定は要らず先頭 51 件で足りる
-			friends := make([]string, 0, len(viewer.Friends))
-			for id := range viewer.Friends {
-				friends = append(friends, id)
-			}
+			// 友達の友達は friend_edges の EXISTS で判定する
 			conditions += ` AND p.author_id IN (SELECT followee_id FROM follows WHERE follower_id = $1)
    AND (p.visibility = 'public'
-    OR (p.visibility = 'friends' AND p.author_id = ANY($5::text[]))
-    OR (p.visibility = 'friends_of_friends' AND (p.author_id = ANY($5::text[]) OR EXISTS(
-         SELECT 1 FROM friend_edges f WHERE f.user_id = p.author_id AND f.friend_id = ANY($5::text[])))))`
-			args = append(args, friends)
-			limit = " LIMIT 51"
-		}
-		if input.Feed != "public" && input.Feed != "following" {
-			conditions += ` AND p.author_id = ANY($5::text[])`
-			args = append(args, authors)
+    OR (p.visibility = 'friends' AND p.author_id = ANY(` + friendIDs + `))
+    OR (p.visibility = 'friends_of_friends' AND (p.author_id = ANY(` + friendIDs + `) OR EXISTS(
+         SELECT 1 FROM friend_edges f WHERE f.user_id = p.author_id AND f.friend_id = ANY(` + friendIDs + `)))))`
 		}
 		posts, err := selectPostsWithAuthor(ctx, h.DB, conditions+`
-   ORDER BY p.posted_at DESC, p.id DESC`+limit, args...)
+   ORDER BY p.posted_at DESC, p.id DESC LIMIT 51`, viewerID, input.BeforePostedAt, input.BeforeID)
 		if err != nil {
 			return err
 		}
-		candidates := make([]PostWithAuthor, 0)
+		items := make([]feedItemResponse, 0, len(posts))
 		for _, post := range posts {
-			if input.Feed == "following" || viewer.canView(post.Post) && matchesFeed(viewer, following, post.Post, input.Feed) {
-				candidates = append(candidates, post)
-			}
-		}
-		items := make([]feedItemResponse, 0)
-		for _, post := range candidates {
 			items = append(items, feedItemResponse{createPostResponse: newPostResponse(post.Post, post.Author)})
-			if len(items) == 51 {
-				break
-			}
 		}
 		return feedResponse(c, items)
 	}
