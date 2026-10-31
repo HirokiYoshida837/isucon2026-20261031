@@ -18,13 +18,11 @@ CREATE INDEX IF NOT EXISTS idx_follows_follower_id_updated_at_id ON follows (fol
 CREATE INDEX IF NOT EXISTS idx_realmojis_image_id_reactor_id ON realmojis (image_id, reactor_id) WHERE replaced_at IS NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_image_id_author_id ON posts (image_id, author_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_author_id_posting_window_id ON posts (author_id, posting_window_id);
-CREATE INDEX IF NOT EXISTS idx_posts_author_id_posted_at_id ON posts (author_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_username_id ON users (username, id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_token_hash ON login_sessions (token_hash) WHERE active = true;
 CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions (user_id) WHERE active = true;
 CREATE INDEX IF NOT EXISTS idx_friend_requests_requester_id_recipient_id ON friend_requests (requester_id, recipient_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient_id_requester_id ON friend_requests (recipient_id, requester_id) WHERE status = 'pending';
-CREATE INDEX IF NOT EXISTS idx_follows_followee_id_follower_id ON follows (followee_id, follower_id);
 CREATE INDEX IF NOT EXISTS idx_posting_windows_local_date ON posting_windows (local_date);
 -- memories / 投稿詳細の realmojis・comments 取得を Index Only Scan にして heap のランダム読み（1 投稿 1 ページ、ディスク 0.5〜0.7ms）を消す（#181）
 -- SELECT 句の列を全部 INCLUDE に持つ（replaced_at / deleted_at は WHERE で NULL 固定だが SELECT 句にあるので入れる）

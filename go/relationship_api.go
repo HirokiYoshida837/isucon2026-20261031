@@ -123,7 +123,7 @@ func blockHandler(h *HandlerContext) echo.HandlerFunc {
 		if actor == input.UserID || input.UserID == "" {
 			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
 		}
-		// ペアロック・active 確認・INSERT・friendships / follows / friend_requests の後始末を sql/92-block-func.sql の関数で 1 往復にする
+		// ペアロック・active 確認・INSERT・friendships / follows / friend_requests の後始末を sql/94-block-func.sql の関数で 1 往復にする
 		var code int
 		if err := h.DB.GetContext(ctx, &code, `SELECT block_user($1, $2, $3)`, actor, input.UserID, uuid.NewString()); err != nil {
 			return err
