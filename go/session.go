@@ -46,6 +46,10 @@ func getSessionFromHeader(c *echo.Context, db *sqlx.DB) (*Session, error) {
 
 	tokenHashBytes := sha256.Sum256([]byte(token))
 	tokenHash := hex.EncodeToString(tokenHashBytes[:])
+	cached, ok, gen := sessionCache.get(tokenHash)
+	if ok {
+		return &cached, nil
+	}
 	var session Session
 	err := db.GetContext(c.Request().Context(), &session, `
 		SELECT s.user_id, s.token_hash, s.created_at, u.region
@@ -59,6 +63,7 @@ func getSessionFromHeader(c *echo.Context, db *sqlx.DB) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to get session: %w", err)
 	}
+	sessionCache.put(session, gen)
 	return &session, nil
 }
 
@@ -101,6 +106,7 @@ func InvalidateLoginSession(db *sqlx.DB, userID string, tokenHash string) error 
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("failed to commit transaction: %w", err)
 	}
+	sessionCache.remove(userID, tokenHash)
 
 	return nil
 }
