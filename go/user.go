@@ -41,6 +41,15 @@ func validRegion(region string) bool {
 
 var userColumns = []string{"id", "username", "secret_key_hash", "display_name", "bio", "profile_image_id", "region", "account_type", "status"}
 
+// 列名の前に "u." などの別名を付ける（JOIN したときに素の列名で受けるため）
+func prefixColumns(prefix string, columns []string) []string {
+	out := make([]string, len(columns))
+	for i, column := range columns {
+		out[i] = prefix + column
+	}
+	return out
+}
+
 func userColumnsAs(alias, prefix string) string {
 	columns := make([]string, len(userColumns))
 	for i, column := range userColumns {
