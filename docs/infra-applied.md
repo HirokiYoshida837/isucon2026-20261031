@@ -21,6 +21,7 @@
 
 ## 未適用
 - asia2 PostgreSQL `conf.d/96-log-params.conf`（`log_parameter_max_length = 256`）: スロークエリログを再び有効にするときだけ必要（07:12 にログ自体を止めたので今は不要）
+- asia2 PostgreSQL `conf.d/99-wal.conf`（#234）: `wal_buffers 128MB`（再起動が要る）、`wal_writer_delay 10ms`、`wal_writer_flush_after 8MB`（reload で効く）。配置と戻し方はファイル冒頭
 - isureal-go の GC 設定（#92）: `.claude/skills/infra-tuning/infra/systemd/isureal-go.service.d/gc.conf`（GOGC=200、GOMEMLIMIT=2GiB）。asia1 / europe1 / america1 に配置する。戻し方はファイル冒頭
 - なし（C2 `tcp_tw_reuse=1` はベンチ後の TIME_WAIT を見て判断）
 
