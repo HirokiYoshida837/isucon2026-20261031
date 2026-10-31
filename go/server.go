@@ -34,9 +34,10 @@ func warmUpDB(db *sqlx.DB, n int) {
 }
 
 type HandlerContext struct {
-	DB     *sqlx.DB
-	Config *Config
-	IPBans *IPBanList
+	DB            *sqlx.DB
+	Config        *Config
+	IPBans        *IPBanList
+	Notifications *NotificationHub
 }
 
 func NewServer(config *Config) *echo.Echo {
@@ -70,10 +71,12 @@ func NewServer(config *Config) *echo.Echo {
 	warmUpDB(db, dbMaxConns)
 
 	handlerContext := &HandlerContext{
-		DB:     db,
-		Config: config,
-		IPBans: &IPBanList{},
+		DB:            db,
+		Config:        config,
+		IPBans:        &IPBanList{},
+		Notifications: NewNotificationHub(db, config.Region),
 	}
+	go handlerContext.Notifications.Run(context.Background())
 	e.Use(IPBanMiddleware(handlerContext))
 
 	e.POST("/api/initialize", initializeHandler(handlerContext))

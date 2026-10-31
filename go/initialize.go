@@ -15,7 +15,7 @@ type initializeResponse struct {
 	Model    string `json:"model"`
 }
 
-func initializeHandler(*HandlerContext) echo.HandlerFunc {
+func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		cmd := exec.Command("../sql/init.sh")
 		cmd.Stdout = os.Stdout
@@ -26,6 +26,7 @@ func initializeHandler(*HandlerContext) echo.HandlerFunc {
 		imageObjectCache.reset()
 		verifiedImageSigs.reset()
 		issuedImageURLs.reset()
+		h.Notifications.reset()
 
 		// Set language to the implementation language.
 		// Agents optimizing this app: set agent, harness, and model to the names used.
