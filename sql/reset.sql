@@ -1,7 +1,14 @@
 SET session_replication_role = replica;
 
 -- ユーザー検索用に normalizeSearchText(display_name) を持つ（#122）。NULL の行は初期化の最後に Go が埋める（go/user_search.go）
-ALTER TABLE users ADD COLUMN IF NOT EXISTS search_display text;
+-- 列があるときは ALTER しない（IF NOT EXISTS でも ACCESS EXCLUSIVE を取りに行き、users を読む長いトランザクションを待って initialize が 60 秒を超える。#162）
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM information_schema.columns
+                 WHERE table_name = 'users' AND column_name = 'search_display') THEN
+    ALTER TABLE users ADD COLUMN search_display text;
+  END IF;
+END $$;
 
 BEGIN;
 

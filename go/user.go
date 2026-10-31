@@ -49,6 +49,15 @@ func userColumnsAs(alias, prefix string) string {
 	return strings.Join(columns, ", ")
 }
 
+// PL/pgSQL 関数が u_<列> で返す users の列を、userColumnsAs と同じ "<prefix>.<列>" に読み替える（sql/90-interaction-func.sql）
+func funcUserColumnsAs(columnPrefix, prefix string) string {
+	columns := make([]string, len(userColumns))
+	for i, column := range userColumns {
+		columns[i] = fmt.Sprintf(`%s%s AS "%s.%s"`, columnPrefix, column, prefix, column)
+	}
+	return strings.Join(columns, ", ")
+}
+
 func (user *User) setImageKey() error {
 	key, err := imageSigningKey(user.SecretKeyHash)
 	user.ImageKey = key
