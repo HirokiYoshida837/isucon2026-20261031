@@ -63,3 +63,48 @@ func (c *imageCache) reset() {
 	c.ll.Init()
 	c.items = map[string]*list.Element{}
 }
+
+// 画像の持ち主（image_objects.owner_user_id）は不変なので LRU で持つ。生存確認は毎回 DB で行う。
+const imageOwnerMax = 500000
+
+type ownerCache struct {
+	mu    sync.Mutex
+	ll    *list.List
+	items map[string]*list.Element
+}
+
+type ownerEntry struct{ image, owner string }
+
+var imageOwners = &ownerCache{ll: list.New(), items: map[string]*list.Element{}}
+
+func (c *ownerCache) get(image string) (string, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	el, ok := c.items[image]
+	if !ok {
+		return "", false
+	}
+	c.ll.MoveToFront(el)
+	return el.Value.(*ownerEntry).owner, true
+}
+
+func (c *ownerCache) put(image, owner string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.items[image]; ok {
+		return
+	}
+	c.items[image] = c.ll.PushFront(&ownerEntry{image, owner})
+	if c.ll.Len() > imageOwnerMax {
+		el := c.ll.Back()
+		c.ll.Remove(el)
+		delete(c.items, el.Value.(*ownerEntry).image)
+	}
+}
+
+func (c *ownerCache) reset() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ll.Init()
+	c.items = map[string]*list.Element{}
+}
