@@ -16,6 +16,7 @@
 | 10-31 03:06 | asia1 / europe1 / america1 | journald（PR #50）`/etc/systemd/journald.conf.d/isucon.conf` | ForwardToSyslog=no、RateLimit 0、SystemMaxUse 1G | `sudo rm /etc/systemd/journald.conf.d/isucon.conf && sudo systemctl restart systemd-journald` |
 | 10-31 03:07 | 4 台 | `os-quiet.sh`（PR #52）+ `/etc/sysctl.d/91-isucon.conf` | apt/fwupd/motd/update-notifier の timer と unattended-upgrades 等を disable。tcp_max_syn_backlog 8192、netdev_max_backlog 8192、tcp_fin_timeout 10 | `os-quiet.sh --restore` |
 | 10-31 03:09 | asia1 / europe1 / america1 | nginx サイト設定 `apply-site.sh`（PR #49 + #55）+ `/etc/nginx/isucon/proxy_keepalive.conf` | upstream app keepalive 128、SSE（`/api/notifications`）の read/send timeout 1h・buffering off、画像 3 秒キャッシュ | `rollback.sh -y 20261031-030939-site`（asia1）/ `20261031-030942-site`（europe1）/ `20261031-030946-site`（america1） |
+| 10-31 06:5x | asia2 | PostgreSQL `conf.d/95-bgwriter.conf`（#188） | bgwriter_delay 20ms、bgwriter_lru_maxpages 1000、bgwriter_lru_multiplier 4.0（SIGHUP で反映） | `sudo rm /etc/postgresql/16/main/conf.d/95-bgwriter.conf && sudo systemctl reload postgresql` |
 
 ## 未適用
 - isureal-go の GC 設定（#92）: `.claude/skills/infra-tuning/infra/systemd/isureal-go.service.d/gc.conf`（GOGC=200、GOMEMLIMIT=2GiB）。asia1 / europe1 / america1 に配置する。戻し方はファイル冒頭
