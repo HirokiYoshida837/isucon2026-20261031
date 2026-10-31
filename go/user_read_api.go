@@ -106,7 +106,7 @@ func getUserHandler(h *HandlerContext) echo.HandlerFunc {
 		err := h.DB.GetContext(ctx, &row, `
    SELECT `+strings.Join(userColumns, ", ")+`,
     EXISTS(SELECT 1 FROM block_relations WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)) AS blocked,
-    EXISTS(SELECT 1 FROM friendships WHERE (user_low_id=$1 AND user_high_id=$2) OR (user_low_id=$2 AND user_high_id=$1)) AS friend
+    EXISTS(SELECT 1 FROM friend_edges WHERE user_id=$1 AND friend_id=$2) AS friend
    FROM users WHERE id = $2 AND status = 'active'
   `, viewer, input.UserID)
 		if errors.Is(err, sql.ErrNoRows) || row.Blocked {
