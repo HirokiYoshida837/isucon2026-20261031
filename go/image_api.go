@@ -41,15 +41,24 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 
 		ctx := c.Request().Context()
-		// 持ち主の鍵と削除状態を毎回確認する（即時反映）。本体はここでは取らない。
+		// 持ち主の鍵と削除状態を毎回確認する（即時反映）。
 		// image_objects は id だけだと全パーティションを見るので、対応表 image_keys から引く（#121）
+		// 本体がキャッシュに無く署名が検証済みのときだけ、本体も同じ問い合わせで取る（DB 往復を 1 回減らす）。
+		// 未検証の署名で本体を取らないのは、不正な署名の要求で大きな本体を引かないため。
+		sigKey := newVerifiedSigKey(input.ImageID, exp, sig)
+		entry, cached := imageObjectCache.get(input.ImageID)
+		withData := !cached && verifiedImageSigs.has(sigKey)
 		var object struct {
 			SecretKeyHash string    `db:"secret_key_hash"`
 			Alive         bool      `db:"alive"`
 			CreatedAt     time.Time `db:"created_at"`
+			MediaType     *string   `db:"media_type"`
+			Data          []byte    `db:"data"`
 		}
 		err = h.DB.GetContext(ctx, &object, `
-   SELECT u.secret_key_hash, (
+   SELECT u.secret_key_hash,
+   (SELECT media_type FROM image_objects WHERE $2::boolean AND id = i.id AND created_at = i.created_at) AS media_type,
+   (SELECT data FROM image_objects WHERE $2::boolean AND id = i.id AND created_at = i.created_at) AS data, (
      COALESCE(u.profile_image_id = i.id, false)
      OR EXISTS (
        SELECT 1 FROM posts p
@@ -64,14 +73,13 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
    ) AS alive, i.created_at
    FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
    WHERE i.id = $1
-  `, input.ImageID)
+  `, input.ImageID, withData)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
 		if err != nil {
 			return err
 		}
-		sigKey := newVerifiedSigKey(input.ImageID, exp, sig)
 		if !verifiedImageSigs.has(sigKey) {
 			key, err := imageSigningKey(object.SecretKeyHash)
 			if err != nil {
@@ -89,8 +97,14 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if exp <= time.Now().Unix() {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
-		entry, ok := imageObjectCache.get(input.ImageID)
-		if !ok {
+		if withData {
+			// 別々に引いていたときと同じく、本体が無ければ 403
+			if object.MediaType == nil {
+				return NewAPIError(http.StatusForbidden, "image_forbidden")
+			}
+			entry = imageCacheEntry{id: input.ImageID, mediaType: *object.MediaType, data: object.Data}
+			imageObjectCache.put(entry.id, entry.mediaType, entry.data)
+		} else if !cached {
 			entry = imageCacheEntry{id: input.ImageID}
 			err = h.DB.QueryRowxContext(ctx, `SELECT media_type, data FROM image_objects WHERE id = $1 AND created_at = $2`, input.ImageID, object.CreatedAt).Scan(&entry.mediaType, &entry.data)
 			if errors.Is(err, sql.ErrNoRows) {
