@@ -41,6 +41,8 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
 - 設定: `~/.config/isucon/isucon.env`（ホスト・デプロイ・ベンチ前後コマンド。gh-setup / newrelic-setup と共通）と `discord.env`（Webhook URL）。中身を表示・出力しないこと
 - 履歴: リポジトリ直下の `bench-logs/scores.tsv`（.gitignore 済み）
 - `DRY_RUN=1` で Discord に送らず内容だけ表示する
+- 投稿だけ失敗したら `REPOST_DIR=bench-logs/bench-<日時> bench-report.sh <スコア> [メモ]` で、保存済みの結果から再投稿できる（集計し直さず、履歴にも追記しない）
+- 添付は 9 個まで（本文が 2000 字を超えると全文が 10 個目の添付になるため）。超えた分は省略してその旨を表示する
 - ベンチ中の CPU プロファイル（pprof）は bench-start.sh が仕込み、bench-report.sh が回収する
   - アプリ側は `go/pprof.go`（127.0.0.1:6060、PR #59）。提出前の掃除で外す（harness-setup の 04 のお片付けリスト）
   - 投稿の「アプリの CPU 内訳」の読み方: `CPU 32.85s / 40s（82%）` は計測 40 秒のうち CPU を 32.85 秒使った（2 コアなら 200% が上限）。`app(cum)` はアプリの関数で呼び出し先込みの割合、`leaf(flat)` は CPU を直接使った関数

@@ -16,9 +16,16 @@ else
   MIN="${MIN:-5}"
   PERIOD="直近 ${MIN} 分（開始時刻の記録なし）"
 fi
-TS=$(date +%Y%m%d-%H%M%S); OUT="$ISU_LOG_DIR/bench-$TS"; mkdir -p "$OUT"
 first=${ISU_HOSTS%% *}
 COMMIT=$(ssh "${SSH_OPTS[@]}" "$first" "cd '$ISU_REMOTE_DIR' && git log -1 --format='%h %s'" 2>/dev/null || echo 不明)
+
+# REPOST_DIR=<保存先> なら集計し直さず、保存済みの結果から投稿だけやり直す（履歴にも追記しない）
+if [ -n "${REPOST_DIR:-}" ]; then
+  OUT="$REPOST_DIR"; [ -d "$OUT" ] || { echo "保存先が無い: $OUT" >&2; exit 1; }
+  COMMIT=$(awk -F'\t' -v s="$SCORE" '$2 == s {c = $3} END {print c}' "$ISU_LOG_DIR/scores.tsv")
+  : "${COMMIT:=不明}"
+else
+TS=$(date +%Y%m%d-%H%M%S); OUT="$ISU_LOG_DIR/bench-$TS"; mkdir -p "$OUT"
 
 # 各サーバーの集計（alp / pt-query-digest など）
 if [ -n "$ISU_AFTER_CMD" ]; then
@@ -35,13 +42,21 @@ fi
 
 # pprof（bench-start.sh が仕込んだ CPU プロファイル）を回収して集計
 PPROF=$("$SKILL_DIR/pprof-collect.sh" "$OUT" 2>/dev/null)
+fi
+[ -z "${REPOST_DIR:-}" ] || PPROF=$(PPROF_LOCAL=1 "$SKILL_DIR/pprof-collect.sh" "$OUT" 2>/dev/null)
 
 # スコア履歴（TSV）
 HIST="$ISU_LOG_DIR/scores.tsv"
 [ -f "$HIST" ] || printf 'time\tscore\tcommit\tmember\tmemo\tstart_epoch\tend_epoch\n' > "$HIST"
+if [ -n "${REPOST_DIR:-}" ]; then
+  # 再投稿: 今回の行を除いた履歴からベストと前回を出す
+  BEST=$(awk -F'\t' -v s="$SCORE" 'NR>1 && $2 != s && $2+0>m {m=$2+0} END {print m+0}' "$HIST")
+  PREV=$(awk -F'\t' -v s="$SCORE" 'NR>1 && $2 != s {p=$2} END {print p+0}' "$HIST")
+else
 BEST=$(awk -F'\t' 'NR>1 && $2+0>m {m=$2+0} END {print m+0}' "$HIST")
 PREV=$(awk -F'\t' 'NR>1 {p=$2} END {print p+0}' "$HIST")
 printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$(date '+%H:%M')" "$SCORE" "$COMMIT" "$ISU_MEMBER" "$MEMO" "$START" "$END" >> "$HIST"
+fi
 MARK=""; [ "$SCORE" -gt "$BEST" ] 2>/dev/null && MARK=" 🏆 自己ベスト"
 
 top() { [ -f "$1" ] && head -6 "$1" | cut -c1-160; }
@@ -75,7 +90,13 @@ $(host_table)
 ${PPROF:-（取得なし）}
 \`\`\`
 詳細（プロセス別 CPU・メモリ、DB 接続数、ディスク・NW、alp、pt-query-digest、pprof の上位 40）は添付"
-ARGS=()
-for f in "$OUT"/*; do case "$f" in *.prof) continue;; esac; [ -s "$f" ] && ARGS+=(-f "$f"); done
-"$POST" ${ARGS[@]+"${ARGS[@]}"} "$MSG"
+# 添付は 9 個まで（Discord の上限 10 個から、本文が長いときの全文添付の分を空ける。.prof と、プロファイルが取れなかったホストの pprof ログは外す）
+ARGS=(); n=0
+for f in "$OUT"/*; do
+  case "$f" in *.prof) continue;; *pprof-*.txt) grep -q "flat 上位" "$f" || continue;; esac
+  [ -s "$f" ] || continue
+  [ "$n" -lt 9 ] || { echo "添付が 9 個を超えたので省略: $(basename "$f")" >&2; continue; }
+  ARGS+=(-f "$f"); n=$((n + 1))
+done
+"$POST" ${ARGS[@]+"${ARGS[@]}"} "$MSG" || echo "投稿に失敗。REPOST_DIR=$OUT $0 $SCORE で再投稿できる" >&2
 echo "saved: $OUT"
