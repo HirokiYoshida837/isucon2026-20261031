@@ -12,10 +12,17 @@ import (
 )
 
 type getNotificationsResponse struct {
-	ID              string    `json:"id" db:"id"`
-	PostingWindowID string    `json:"postingWindowId" db:"posting_window_id"`
-	Region          string    `json:"region" db:"region"`
-	CreatedAt       time.Time `json:"createdAt" db:"created_at"`
+	ID              string    `json:"id"`
+	PostingWindowID string    `json:"postingWindowId"`
+	Region          string    `json:"region"`
+	CreatedAt       time.Time `json:"createdAt"`
+}
+
+type getNotificationsRow struct {
+	ID              *string    `db:"id"`
+	PostingWindowID *string    `db:"posting_window_id"`
+	Region          *string    `db:"region"`
+	CreatedAt       *time.Time `db:"created_at"`
 }
 
 func getNotificationsHandler(h *HandlerContext) echo.HandlerFunc {
@@ -37,25 +44,33 @@ func getNotificationsHandler(h *HandlerContext) echo.HandlerFunc {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
 		for {
-			user, err := getUser(ctx, h.DB, userID)
+			var row struct {
+				UserRegion string `db:"user_region"`
+				getNotificationsRow
+			}
+			err := h.DB.GetContext(ctx, &row, `
+    SELECT u.region AS user_region, n.id, n.posting_window_id, n.region, n.created_at
+    FROM users u LEFT JOIN LATERAL (
+      SELECT n.id, n.posting_window_id, w.region, n.created_at
+      FROM notifications n JOIN posting_windows w ON w.id = n.posting_window_id
+      WHERE n.user_id = u.id AND n.created_at > $2 AND w.ended_at IS NULL
+      ORDER BY n.created_at, n.id LIMIT 1
+    ) n ON true
+    WHERE u.id = $1 AND u.status = 'active'
+   `, userID, connectedAt)
 			if err != nil {
 				if !errors.Is(err, sql.ErrNoRows) && ctx.Err() == nil {
-					c.Logger().Error("failed to get notification recipient", "error", err)
+					c.Logger().Error("failed to get notification", "error", err)
 				}
 				return nil
 			}
-			if user.Region != session.Region {
+			if row.UserRegion != session.Region {
 				return nil
 			}
-			var notification getNotificationsResponse
-			err = h.DB.GetContext(ctx, &notification, `
-    SELECT n.id, n.posting_window_id, w.region, n.created_at
-    FROM notifications n JOIN posting_windows w ON w.id = n.posting_window_id
-    WHERE n.user_id = $1 AND n.created_at > $2 AND w.ended_at IS NULL
-    ORDER BY n.created_at, n.id LIMIT 1
-   `, userID, connectedAt)
-			if err == nil {
-				data, err := json.Marshal(notification)
+			if row.ID != nil {
+				data, err := json.Marshal(getNotificationsResponse{
+					ID: *row.ID, PostingWindowID: *row.PostingWindowID, Region: *row.Region, CreatedAt: *row.CreatedAt,
+				})
 				if err != nil {
 					c.Logger().Error("failed to encode notification", "error", err)
 					return nil
@@ -64,12 +79,6 @@ func getNotificationsHandler(h *HandlerContext) echo.HandlerFunc {
 					return nil
 				}
 				_ = controller.Flush()
-				return nil
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				if ctx.Err() == nil {
-					c.Logger().Error("failed to get notification", "error", err)
-				}
 				return nil
 			}
 			select {
