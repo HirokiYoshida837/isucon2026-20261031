@@ -38,15 +38,20 @@ func imageSignature(key []byte, imageID string, exp int64) []byte {
 const signedURLReuse = 5 * time.Minute
 
 func signedImageURL(user User, imageID string) string {
-	now := time.Now()
+	// exp は 5 分の境界に揃える（sig_bucket.go）。同じバケットの間は同じ URL になる
+	bucket := sigBucketOf(time.Now())
+	exp := sigBucketExp(bucket)
+	// europe1 / america1 が先に計算して渡してきた署名があれば、HMAC を計算しない
+	if sig, ok := pushedSigs.get(bucket, imageID); ok {
+		return buildSignedURL(imageID, exp, sig[:])
+	}
 	cacheable := len(user.ImageKey) == sha256.Size
 	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID}
 	if cacheable {
-		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= now.Add(imageURLLifetime-signedURLReuse).Unix() {
+		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= exp {
 			return e.url
 		}
 	}
-	exp := now.Add(imageURLLifetime).Unix()
 	sig := imageSignature(user.ImageKey, imageID, exp)
 	if cacheable {
 		return storeIssued(user.ImageKey, imageID, exp, sig)

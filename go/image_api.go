@@ -85,7 +85,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		if !verifiedImageSigs.has(sigKey) {
+		if !verifiedImageSigs.has(sigKey) && !pushedSigMatches(input.ImageID, exp, sig) {
 			key, err := imageSigningKey(object.SecretKeyHash)
 			if err != nil {
 				return err
