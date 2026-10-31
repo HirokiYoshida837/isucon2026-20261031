@@ -69,13 +69,17 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		key, err := imageSigningKey(object.SecretKeyHash)
-		if err != nil {
-			return err
-		}
-		if !hmac.Equal(sig, imageSignature(key, input.ImageID, exp)) {
-			c.Set("abuse", "invalid_signature")
-			return NewAPIError(http.StatusForbidden, "image_forbidden")
+		sigKey := newVerifiedSigKey(input.ImageID, exp, sig)
+		if !verifiedImageSigs.has(sigKey) {
+			key, err := imageSigningKey(object.SecretKeyHash)
+			if err != nil {
+				return err
+			}
+			if !hmac.Equal(sig, imageSignature(key, input.ImageID, exp)) {
+				c.Set("abuse", "invalid_signature")
+				return NewAPIError(http.StatusForbidden, "image_forbidden")
+			}
+			verifiedImageSigs.add(sigKey)
 		}
 		if !object.Alive {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
