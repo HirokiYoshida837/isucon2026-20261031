@@ -8,7 +8,7 @@ import (
 // image_objects は INSERT / DELETE のみで中身が変わらないので、本体はキャッシュしてよい。
 // 返してよいかどうか（生存確認）は毎回 DB で確認する。ここでは持たない。
 // メモリに無ければローカルディスク（image_disk.go）を見る。put はディスクにも書く。
-const imageCacheMaxBytes = 256 << 20
+const imageCacheMaxBytes = 1 << 30 // app の available は 2.7GB 以上（asia1 のプロセスは 256MB 上限で 460MB）
 
 type imageCacheEntry struct {
 	id        string

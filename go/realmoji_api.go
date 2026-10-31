@@ -2,10 +2,7 @@ package isureal
 
 import (
 	"bytes"
-	"database/sql"
-	"errors"
 	"image/jpeg"
-	"io"
 	"mime/multipart"
 	"net/http"
 	"time"
@@ -51,69 +48,43 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		defer file.Close()
-		data, err := io.ReadAll(file)
+		data, err := readBodySized(file, input.Image.Size)
 		if err != nil {
 			return err
 		}
-		img, err := jpeg.Decode(bytes.NewReader(data))
+		// サイズ検証だけなのでヘッダだけ読む（投稿画像 #60 と同じ）
+		img, err := jpeg.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
-		if img.Bounds().Dx() > 512 || img.Bounds().Dy() > 512 {
+		if img.Width > 512 || img.Height > 512 {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
 
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
+		// ペアロック・存在と状態の判定・閲覧可否・置き換えと INSERT を 1 往復で行う（sql/90-interaction-func.sql、#167）
+		var res struct {
+			Code int `db:"code"`
+			RealMojiWithReactor
+		}
+		imageID := uuid.NewString()
+		if err := h.DB.GetContext(ctx, &res, `
+   SELECT code, r_id AS id, r_post_id AS post_id, r_reactor_id AS reactor_id, r_image_id AS image_id, r_reaction_type AS reaction_type,
+          r_created_at AS created_at, r_replaced_at AS replaced_at, r_deleted_at AS deleted_at, `+funcUserColumnsAs("u_", "reactor")+`
+   FROM create_realmoji($1, $2, $3, $4, $5, $6)
+  `, actor, input.PostID, uuid.NewString(), imageID, input.ReactionType, data); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var lock postPairLock
-		err = tx.GetContext(ctx, &lock, postPairLockSQL, actor, input.PostID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
-		}
-		if err != nil {
-			return err
-		}
-		if actor == lock.AuthorID {
-			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
-		}
-		if lock.ActiveCount != 2 {
+		switch res.Code {
+		case 0:
+		case 404:
 			return NewAPIError(http.StatusNotFound, "relationship_not_found")
-		}
-		allowed, err := canViewPost(ctx, tx, actor, input.PostID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
+		default:
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE realmojis SET replaced_at=clock_timestamp() WHERE post_id=$1 AND reactor_id=$2 AND replaced_at IS NULL AND deleted_at IS NULL`, input.PostID, actor); err != nil {
-			return err
-		}
-		var reaction RealMojiWithReactor
-		if err := tx.GetContext(ctx, &reaction, `
-   WITH image AS (
-     INSERT INTO image_objects(id,owner_user_id,data,media_type) VALUES($4,$3,$6,'image/jpeg')
-     RETURNING id,created_at,owner_user_id
-   ), image_key AS (
-     INSERT INTO image_keys(id,created_at,owner_user_id) SELECT id,created_at,owner_user_id FROM image
-   ), r AS (
-     INSERT INTO realmojis(id,post_id,reactor_id,image_id,reaction_type,created_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())
-     RETURNING id,post_id,reactor_id,image_id,reaction_type,created_at,replaced_at,deleted_at
-   )
-   SELECT r.id,r.post_id,r.reactor_id,r.image_id,r.reaction_type,r.created_at,r.replaced_at,r.deleted_at, `+userColumnsAs("u", "reactor")+`
-   FROM r JOIN users u ON u.id = r.reactor_id AND u.status = 'active'
-  `, uuid.NewString(), input.PostID, actor, uuid.NewString(), input.ReactionType, data); err != nil {
-			return err
-		}
+		reaction := res.RealMojiWithReactor
 		if err := reaction.Reactor.setImageKey(); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
 			return err
 		}
 		imageObjectCache.put(reaction.ImageID, "image/jpeg", data)
