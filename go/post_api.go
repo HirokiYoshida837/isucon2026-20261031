@@ -2,6 +2,7 @@ package isureal
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"errors"
 	"image/jpeg"
@@ -218,17 +219,9 @@ func updatePostHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		userID := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		var lockedUserID string
-		if err := tx.GetContext(ctx, &lockedUserID, `SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID); err != nil {
-			return err
-		}
+		// 正常系は tx とユーザー行ロックなしの 1 文（1 往復）。削除との競合は posts の行ロックと deleted_at の再判定で守られる
 		var updated PostWithAuthor
-		err = tx.GetContext(ctx, &updated, `
+		err := h.DB.GetContext(ctx, &updated, `
    UPDATE posts p SET caption = COALESCE($3, p.caption), visibility = COALESCE($4, p.visibility)
    FROM posting_windows w, users u
    WHERE p.id = $1 AND p.author_id = $2 AND p.deleted_at IS NULL
@@ -239,21 +232,8 @@ func updatePostHandler(h *HandlerContext) echo.HandlerFunc {
      w.on_time_deadline, w.ended_at AS window_ended_at, `+userColumnsAs("u", "author"),
 			input.PostID, userID, input.Caption, input.Visibility)
 		if errors.Is(err, sql.ErrNoRows) {
-			// 0 行のときだけ従来の判定
-			post, err := getPost(ctx, tx, input.PostID)
-			if errors.Is(err, sql.ErrNoRows) {
-				return NewAPIError(http.StatusNotFound, "post_not_found")
-			}
-			if err != nil {
-				return err
-			}
-			if post.AuthorID != userID || post.WindowEndedAt != nil {
-				return NewAPIError(http.StatusForbidden, "post_not_editable")
-			}
-			if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = COALESCE($2, caption), visibility = COALESCE($3, visibility) WHERE id = $1`, post.ID, input.Caption, input.Visibility); err != nil {
-				return err
-			}
-			updated, err = getPostWithAuthor(ctx, tx, post.ID)
+			// 0 行のときだけ従来の tx とロックで判定
+			updated, err = updatePostSlow(ctx, h, input, userID)
 		}
 		if err != nil {
 			return err
@@ -261,11 +241,41 @@ func updatePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := updated.Author.setImageKey(); err != nil {
 			return err
 		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
 		return c.JSON(http.StatusOK, updatePostResponse(newPostResponse(updated.Post, updated.Author)))
 	}
+}
+
+func updatePostSlow(ctx context.Context, h *HandlerContext, input updatePostRequest, userID string) (PostWithAuthor, error) {
+	tx, err := h.DB.BeginTxx(ctx, nil)
+	if err != nil {
+		return PostWithAuthor{}, err
+	}
+	defer tx.Rollback()
+	var lockedUserID string
+	if err := tx.GetContext(ctx, &lockedUserID, `SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID); err != nil {
+		return PostWithAuthor{}, err
+	}
+	post, err := getPost(ctx, tx, input.PostID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return PostWithAuthor{}, NewAPIError(http.StatusNotFound, "post_not_found")
+	}
+	if err != nil {
+		return PostWithAuthor{}, err
+	}
+	if post.AuthorID != userID || post.WindowEndedAt != nil {
+		return PostWithAuthor{}, NewAPIError(http.StatusForbidden, "post_not_editable")
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = COALESCE($2, caption), visibility = COALESCE($3, visibility) WHERE id = $1`, post.ID, input.Caption, input.Visibility); err != nil {
+		return PostWithAuthor{}, err
+	}
+	updated, err := getPostWithAuthor(ctx, tx, post.ID)
+	if err != nil {
+		return PostWithAuthor{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return PostWithAuthor{}, err
+	}
+	return updated, nil
 }
 
 type deletePostRequest struct {
