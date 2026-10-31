@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -57,5 +58,33 @@ func TestPrewarmSigsFallsBackWhenPeerDown(t *testing.T) {
 	}
 	if u := signedImageURL(User{ImageKey: key}, "down-0"); u == "" {
 		t.Error("自前計算に戻れていない")
+	}
+}
+
+func TestSignAcrossLocalShare(t *testing.T) {
+	srv := httptest.NewServer(signHandler("t"))
+	defer srv.Close()
+	oldPeers, oldToken := signPeers, signToken
+	signPeers, signToken = []string{strings.TrimPrefix(srv.URL, "http://")}, "t"
+	defer func() { signPeers, signToken = oldPeers, oldToken }()
+
+	key := bytes.Repeat([]byte{3}, 32)
+	reqs := make([]sigReq, 10)
+	for i := range reqs {
+		reqs[i] = sigReq{key: key, imageID: fmt.Sprintf("loc-%d", i)}
+	}
+	for _, pct := range []int{0, 50, 100} {
+		got := map[string][]byte{}
+		var mu sync.Mutex
+		signAcross(context.Background(), 1793415639, reqs, pct, func(r sigReq, sig []byte) {
+			mu.Lock()
+			got[r.imageID] = sig
+			mu.Unlock()
+		})
+		for _, r := range reqs {
+			if !bytes.Equal(got[r.imageID], imageSignature(key, r.imageID, 1793415639)) {
+				t.Errorf("pct=%d %s: 署名が違う/無い", pct, r.imageID)
+			}
+		}
 	}
 }
