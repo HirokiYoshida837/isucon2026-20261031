@@ -84,6 +84,8 @@ type sigPusher struct {
 	pushedOK map[int64]bool
 }
 
+var sigPushMismatchLogged bool // run の goroutine だけが触る
+
 func startSigPusher(db *sqlx.DB, config *Config) {
 	if config.SigPushTarget == "" || config.SigPushTarget == "off" {
 		return
@@ -223,13 +225,17 @@ func (p *sigPusher) load() error {
 }
 
 func (p *sigPusher) status() map[int64]int {
-	req, _ := http.NewRequest(http.MethodGet, p.target+"/internal/sigs/status", nil)
+	req, _ := http.NewRequest(http.MethodGet, p.target+"/internal/sigs/status?seconds="+strconv.FormatInt(sigBucketSeconds, 10), nil)
 	req.Header.Set("X-Sign-Token", p.token)
 	resp, err := p.client.Do(req)
 	if err != nil {
 		return nil
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusConflict && !sigPushMismatchLogged { // バケット長が asia1 と違う。送らない（asia1 は自前で計算する）
+		sigPushMismatchLogged = true
+		log.Printf("sig push: asia1 rejected ISUREAL_SIG_BUCKET_SECONDS=%d (mismatch); not pushing", sigBucketSeconds)
+	}
 	var raw map[string]int
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&raw) != nil {
 		return nil
@@ -341,7 +347,7 @@ func (p *sigPusher) push(b int64) error {
 }
 
 func (p *sigPusher) send(b int64, body []byte) error {
-	req, err := http.NewRequest(http.MethodPost, p.target+"/internal/sigs?bucket="+strconv.FormatInt(b, 10), bytes.NewReader(body))
+	req, err := http.NewRequest(http.MethodPost, p.target+"/internal/sigs?bucket="+strconv.FormatInt(b, 10)+"&seconds="+strconv.FormatInt(sigBucketSeconds, 10), bytes.NewReader(body))
 	if err != nil {
 		return err
 	}

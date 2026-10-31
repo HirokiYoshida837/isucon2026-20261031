@@ -118,7 +118,7 @@ func (c *verifiedSigCache) reset() {
 // 正しい署名を知っている (image_id, exp) で違う sig が来たときも HMAC なしでここに入れる（#270）。
 var rejectedImageSigs = &verifiedSigCache{items: map[verifiedSigKey]struct{}{}}
 
-// 発行した署名付き URL のキャッシュ。(鍵, image_id) ごとに最後に発行した URL と exp を持ち、signedURLReuse の間は使い回す。
+// 発行した署名付き URL のキャッシュ。(鍵, image_id) ごとに最後に発行した URL と exp を持ち、同じバケット（sig_bucket.go）の間は使い回す。
 // 上限に達したら 1 世代前（prev）に回し、直近 signedURLMaxEntries 件は必ず残す（#160。全消去だと発行側の HMAC もやり直しになる）
 const signedURLMaxEntries = 200000
 

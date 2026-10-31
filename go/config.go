@@ -25,6 +25,8 @@ type Config struct {
 	SigPushTarget   string
 	SigPushBPS      int
 	SigPushMaxItems int
+	// 画像署名の exp を揃えるバケット長（秒）。ISUREAL_SIG_BUCKET_SECONDS（既定 300）。3 台で同じ値にする。検証は setSigBucketSeconds
+	SigBucketSeconds string
 }
 
 func ConfigFromEnv() *Config {
@@ -43,6 +45,7 @@ func ConfigFromEnv() *Config {
 		SigPushTarget:            envOrDefault("ISUREAL_SIG_PUSH_TARGET", "http://192.168.1.10:8081"),
 		SigPushBPS:               envInt("ISUREAL_SIG_PUSH_BPS", 2_000_000),
 		SigPushMaxItems:          envInt("ISUREAL_SIG_PUSH_MAX_ITEMS", 2_000_000),
+		SigBucketSeconds:         os.Getenv("ISUREAL_SIG_BUCKET_SECONDS"),
 	}
 }
 

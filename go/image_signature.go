@@ -34,11 +34,11 @@ func imageSignature(key []byte, imageID string, exp int64) []byte {
 	return value
 }
 
-// 発行した URL は signedURLReuse の間そのまま返す（期限が最大その分だけ短くなる）。
+// 発行した URL は同じバケットの間そのまま返す（期限が最大バケット長だけ短くなる）。signedURLReuse はバケット長の既定値（sig_bucket.go）。
 const signedURLReuse = 5 * time.Minute
 
 func signedImageURL(user User, imageID string) string {
-	// exp は 5 分の境界に揃える（sig_bucket.go）。同じバケットの間は同じ URL になる
+	// exp はバケット長（既定 5 分）の境界に揃える（sig_bucket.go）。同じバケットの間は同じ URL になる
 	bucket := sigBucketOf(time.Now())
 	exp := sigBucketExp(bucket)
 	// europe1 / america1 が先に計算して渡してきた署名があれば、HMAC を計算しない

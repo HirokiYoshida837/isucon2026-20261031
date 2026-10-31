@@ -44,6 +44,7 @@ func NewServer(config *Config) *echo.Echo {
 	if !validRegion(config.Region) {
 		panic("invalid server region: " + config.Region)
 	}
+	setSigBucketSeconds(config.SigBucketSeconds) // 署名の発行・検証・先回りより前に決める
 	initNewRelic()
 	e := echo.New()
 	e.IPExtractor = extractClientIP
