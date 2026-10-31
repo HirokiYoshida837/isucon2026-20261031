@@ -72,6 +72,7 @@ func NewServer(config *Config) *echo.Echo {
 	warmUpDB(db, dbMaxConns)
 	startImageURLWarmUp(db, config.Region)
 	startSignService(config)
+	initSignClient(config)
 
 	handlerContext := &HandlerContext{
 		DB:            db,
