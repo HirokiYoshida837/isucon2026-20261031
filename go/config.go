@@ -4,6 +4,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"strconv"
 	"time"
 )
 
@@ -18,6 +19,12 @@ type Config struct {
 	GuardInApp bool
 	// 通知 Hub が DB を見に行く間隔。ISUREAL_NOTIFICATION_POLL_INTERVAL（例 100ms）。短いほど通知が早く届く
 	NotificationPollInterval time.Duration
+	// 画像署名の先回り計算（sig_push_client.go）。europe1 / america1 が asia1 の内部 API（private IP の 8081）に送る。
+	// ISUREAL_SIG_PUSH_TARGET（既定 http://192.168.1.10:8081、off で止める）、ISUREAL_SIG_PUSH_BPS（送信の帯域、既定 2MB/s）、
+	// ISUREAL_SIG_PUSH_MAX_ITEMS（1 台が持つ画像数の上限、既定 2,000,000）
+	SigPushTarget   string
+	SigPushBPS      int
+	SigPushMaxItems int
 }
 
 func ConfigFromEnv() *Config {
@@ -31,6 +38,9 @@ func ConfigFromEnv() *Config {
 		LogLevel:   envOrDefault("ISUREAL_LOG_LEVEL", "info"),
 
 		NotificationPollInterval: envDuration("ISUREAL_NOTIFICATION_POLL_INTERVAL", time.Second, 10*time.Millisecond),
+		SigPushTarget:            envOrDefault("ISUREAL_SIG_PUSH_TARGET", "http://192.168.1.10:8081"),
+		SigPushBPS:               envInt("ISUREAL_SIG_PUSH_BPS", 2_000_000),
+		SigPushMaxItems:          envInt("ISUREAL_SIG_PUSH_MAX_ITEMS", 2_000_000),
 	}
 }
 
@@ -53,6 +63,13 @@ func envDuration(key string, defaultValue, min time.Duration) time.Duration {
 		return defaultValue
 	}
 	return d
+}
+
+func envInt(key string, defaultValue int) int {
+	if v, err := strconv.Atoi(os.Getenv(key)); err == nil && v >= 0 {
+		return v
+	}
+	return defaultValue
 }
 
 func envOrDefault(key, defaultValue string) string {

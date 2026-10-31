@@ -30,9 +30,8 @@ func prewarmSigs(reqs []sigReq) {
 	if len(reqs) < simdMinLanes || !simdAvailable() {
 		return
 	}
-	now := time.Now()
-	exp := now.Add(imageURLLifetime).Unix()
-	reuseFrom := now.Add(imageURLLifetime - signedURLReuse).Unix()
+	bucket := sigBucketOf(time.Now())
+	exp := sigBucketExp(bucket)
 	seen := make(map[signedURLKey]struct{}, len(reqs))
 	keys := make([][]byte, 0, len(reqs))
 	ids := make([]string, 0, len(reqs))
@@ -45,7 +44,10 @@ func prewarmSigs(reqs []sigReq) {
 			continue
 		}
 		seen[k] = struct{}{}
-		if e, ok := issuedImageURLs.get(k); ok && e.exp >= reuseFrom {
+		if _, ok := pushedSigs.get(bucket, r.imageID); ok { // europe1 / america1 が計算済み
+			continue
+		}
+		if e, ok := issuedImageURLs.get(k); ok && e.exp >= exp {
 			continue
 		}
 		keys = append(keys, r.key)
