@@ -114,7 +114,7 @@ func createPostHandler(h *HandlerContext) echo.HandlerFunc {
      FROM posts p JOIN posting_windows posted ON posted.id = p.posting_window_id
      WHERE p.author_id = $2 AND posted.local_date = w.local_date
    ) counts
-   WHERE w.region = $1 AND w.ended_at IS NULL FOR UPDATE OF w
+   WHERE w.region = $1 AND w.ended_at IS NULL FOR SHARE OF w
   `
 		err = tx.GetContext(ctx, &window, windowQuery, user.Region, userID)
 		if errors.Is(err, sql.ErrNoRows) {
