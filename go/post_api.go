@@ -8,7 +8,6 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -88,70 +87,40 @@ func createPostHandler(h *HandlerContext) echo.HandlerFunc {
 
 		ctx := c.Request().Context()
 		userID := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		var user User
-		if err := tx.GetContext(ctx, &user, `SELECT `+strings.Join(userColumns, ", ")+` FROM users WHERE id = $1 AND status = 'active' FOR NO KEY UPDATE`, userID); err != nil {
-			return err
-		}
-		if err := user.setImageKey(); err != nil {
-			return err
-		}
-		var window struct {
-			ID             string    `db:"id"`
-			StartsAt       time.Time `db:"starts_at"`
-			OnTimeDeadline time.Time `db:"on_time_deadline"`
-			Active         int       `db:"active"`
-			Deleted        int       `db:"deleted"`
-		}
-		const windowQuery = `
-   SELECT w.id, w.starts_at, w.on_time_deadline, counts.active, counts.deleted
-   FROM posting_windows w CROSS JOIN LATERAL (
-     SELECT count(*) FILTER (WHERE p.deleted_at IS NULL) AS active,
-            count(*) FILTER (WHERE p.deleted_at IS NOT NULL) AS deleted
-     FROM posts p JOIN posting_windows posted ON posted.id = p.posting_window_id
-     WHERE p.author_id = $2 AND posted.local_date = w.local_date
-   ) counts
-   WHERE w.region = $1 AND w.ended_at IS NULL FOR SHARE OF w
-  `
-		err = tx.GetContext(ctx, &window, windowQuery, user.Region, userID)
-		if errors.Is(err, sql.ErrNoRows) {
-			err = tx.GetContext(ctx, &window, windowQuery, user.Region, userID)
-		}
-		if err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				return NewAPIError(http.StatusConflict, "post_slot_unavailable")
-			}
-			return err
-		}
-		postedAt := time.Now().UTC()
-		if window.Active != 0 || window.Deleted >= 2 || postedAt.Before(window.StartsAt) {
-			return NewAPIError(http.StatusConflict, "post_slot_unavailable")
+		// ユーザーのロック・期間と枠の判定・3 テーブルへの INSERT を 1 往復で行う（sql/87-create-post-func.sql）
+		var res struct {
+			Code int `db:"code"`
+			User
+			WindowID       *string    `db:"r_window_id"`
+			OnTimeDeadline *time.Time `db:"r_on_time_deadline"`
+			PostedAt       *time.Time `db:"r_posted_at"`
 		}
 		imageID := uuid.NewString()
 		postID := uuid.NewString()
-		var post Post
-		if err := tx.GetContext(ctx, &post, `
-   WITH image AS (
-     INSERT INTO image_objects (id, owner_user_id, data, media_type, created_at) VALUES ($4, $2, $12, 'image/jpeg', $11)
-   ), image_key AS (
-     INSERT INTO image_keys (id, created_at, owner_user_id) VALUES ($4, $11, $2)
-   )
-   INSERT INTO posts (id, author_id, posting_window_id, image_id, caption, visibility,
-                      location_kind, latitude, longitude, locality, posted_at)
-   VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-   RETURNING id, author_id, posting_window_id, image_id, caption, visibility,
-             location_kind, latitude, longitude, locality, posted_at
-  `, postID, userID, window.ID, imageID, input.Caption, input.Visibility,
-			location.Kind, location.Latitude, location.Longitude, location.Locality, postedAt, imageData); err != nil {
+		if err := h.DB.GetContext(ctx, &res, `
+   SELECT code, r_id AS id, r_username AS username, r_secret_key_hash AS secret_key_hash, r_display_name AS display_name,
+          r_bio AS bio, r_profile_image_id AS profile_image_id, r_region AS region, r_account_type AS account_type,
+          r_status AS status, r_window_id, r_on_time_deadline, r_posted_at
+   FROM create_post($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+  `, userID, postID, imageID, input.Caption, input.Visibility,
+			location.Kind, location.Latitude, location.Longitude, location.Locality, imageData); err != nil {
 			return err
 		}
-		post.OnTimeDeadline = window.OnTimeDeadline
-		if err := tx.Commit(); err != nil {
+		switch res.Code {
+		case 0:
+		case 409:
+			return NewAPIError(http.StatusConflict, "post_slot_unavailable")
+		default:
+			return sql.ErrNoRows
+		}
+		user := res.User
+		if err := user.setImageKey(); err != nil {
 			return err
+		}
+		post := Post{
+			ID: postID, AuthorID: userID, PostingWindowID: *res.WindowID, ImageID: imageID,
+			Caption: input.Caption, Visibility: input.Visibility, PostLocation: location,
+			PostedAt: *res.PostedAt, OnTimeDeadline: *res.OnTimeDeadline,
 		}
 		return c.JSON(http.StatusCreated, newPostResponse(post, user))
 	}
