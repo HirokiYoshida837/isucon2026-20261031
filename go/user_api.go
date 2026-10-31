@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
@@ -115,30 +116,29 @@ func loginHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusUnauthorized, "invalid_credentials")
 		}
 		ctx := c.Request().Context()
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		var user User
-		err = tx.GetContext(ctx, &user, `SELECT id, username, secret_key_hash, display_name, bio, profile_image_id, region, account_type, status FROM users WHERE username = $1 FOR NO KEY UPDATE`, input.Username)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusUnauthorized, "invalid_credentials")
-		}
-		if err != nil {
-			return err
-		}
 		hash := sha256.Sum256([]byte(input.SecretKey))
-		if user.Status != "active" || user.SecretKeyHash != hex.EncodeToString(hash[:]) {
+		token := uuid.NewString()
+		tokenHashBytes := sha256.Sum256([]byte(token))
+		tokenHash := hex.EncodeToString(tokenHashBytes[:])
+		var res struct {
+			Code    int        `db:"code"`
+			UID     *string    `db:"uid"`
+			Uname   *string    `db:"uname"`
+			Dname   *string    `db:"dname"`
+			Ubio    *string    `db:"ubio"`
+			Uregion *string    `db:"uregion"`
+			Utype   *string    `db:"utype"`
+			Ustatus *string    `db:"ustatus"`
+			Created *time.Time `db:"screated"`
+		}
+		if err := h.DB.GetContext(ctx, &res, `SELECT * FROM login_user($1, $2, $3, $4)`, input.Username, hex.EncodeToString(hash[:]), uuid.NewString(), tokenHash); err != nil {
+			return err
+		}
+		if res.Code != 0 {
 			return NewAPIError(http.StatusUnauthorized, "invalid_credentials")
 		}
-		session, err := createLoginSessionTx(ctx, tx, user.ID)
-		if err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
+		user := User{ID: *res.UID, Username: *res.Uname, DisplayName: *res.Dname, Bio: *res.Ubio, Region: *res.Uregion, AccountType: *res.Utype, Status: *res.Ustatus}
+		session := &Session{UserID: user.ID, TokenHash: tokenHash, CreatedAt: *res.Created, Token: token}
 		cached := *session
 		cached.Region = user.Region
 		sessionCache.putLogin(cached)
