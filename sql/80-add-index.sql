@@ -10,6 +10,9 @@ CREATE INDEX IF NOT EXISTS idx_block_relations_blocked_id ON block_relations (bl
 CREATE INDEX IF NOT EXISTS idx_posts_posting_window_id_posted_at_id ON posts (posting_window_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
 -- register の LOCK TABLE users を外すための一意制約（go/user_api.go の ON CONFLICT (username) が使う）
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (username);
+-- followers / following 一覧（go/relationship_list_api.go）の ORDER BY updated_at DESC, id DESC LIMIT 51 を index 順で返す（#73）
+CREATE INDEX IF NOT EXISTS idx_follows_followee_id_updated_at_id ON follows (followee_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_follows_follower_id_updated_at_id ON follows (follower_id, updated_at DESC, id DESC);
 -- 画像の生存確認（go/image_api.go）・認証（go/session.go）・友達申請・ユーザー検索・自分の投稿の index（#72 #74）
 -- DB にはすでに貼ってある（PR #11 が yochi/feed-indexes 側に入って main に届いていなかった分と、手で貼った posts(author_id, posted_at)）
 CREATE INDEX IF NOT EXISTS idx_realmojis_image_id_reactor_id ON realmojis (image_id, reactor_id) WHERE replaced_at IS NULL AND deleted_at IS NULL;
