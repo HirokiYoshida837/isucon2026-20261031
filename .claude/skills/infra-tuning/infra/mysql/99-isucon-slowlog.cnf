@@ -1,0 +1,13 @@
+# スロークエリログ（計測用）。MySQL 8 / MariaDB 共通の書き方。
+# 配置先: /etc/mysql/conf.d/99-isucon-slowlog.cnf
+# measure.sh on で配置し、measure.sh off で削除する。
+# 最終提出・再起動試験の前に必ず OFF にする（全クエリを書くので、そのままだと I/O とディスクを食う）。
+
+[mysqld]
+slow_query_log = ON
+# AppArmor が書き込みを許可している /var/log/mysql/ に置く（他の場所だと起動に失敗する）。
+slow_query_log_file = /var/log/mysql/mysql-slow.log
+# 0 秒 = 全クエリを記録する。pt-query-digest で「合計時間」の大きい順に見るため。
+long_query_time = 0
+# 【差分】MariaDB 10.11 では log_slow_query / log_slow_query_file / log_slow_query_time という新名も使える。
+# 上の旧名は MariaDB でもそのまま通る。

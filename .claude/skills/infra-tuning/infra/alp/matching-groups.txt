@@ -1,0 +1,16 @@
+# alp の URI まとめ方（matching groups）
+# 1 行 1 正規表現。上から順に評価され、最初に当たったものでまとめられる。
+# 空行と # で始まる行は無視される。カンマを含む正規表現（{1,3} 等）も書ける（bench-after.sh が YAML 経由で渡すため）。
+#
+# 作り方
+# 1. 一度ベンチを回して bench-after.sh を実行する。
+# 2. alp の結果で ID 違いの URI がばらけている箇所を見つける。
+# 3. 具体的なパスを先に、一般的なパスを後に書く。
+#
+# 以下は isucon14（ISURIDE）の例。当日は問題の URI に合わせて書き換える。
+# ^/api/app/rides/[^/]+/evaluation$
+# ^/api/chair/rides/[^/]+/status$
+# ^/api/owner/chairs/[^/]+$
+# ^/api/app/nearby-chairs
+# ^/assets/
+# ^/images/
