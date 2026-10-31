@@ -117,24 +117,23 @@ func blockHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		defer tx.Rollback()
-		var exists bool
-		if err := tx.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM block_relations WHERE blocker_id=$1 AND blocked_id=$2)`, actor, input.UserID); err != nil {
+		var inserted bool
+		if err := tx.GetContext(ctx, &inserted, `
+  WITH ins AS (
+    INSERT INTO block_relations (id, blocker_id, blocked_id) VALUES ($1,$2,$3)
+    ON CONFLICT (blocker_id, blocked_id) DO NOTHING RETURNING id
+  ), f AS (
+    DELETE FROM friendships WHERE user_low_id=$4 AND user_high_id=$5 AND EXISTS (SELECT 1 FROM ins)
+  ), fo AS (
+    DELETE FROM follows WHERE ((follower_id=$2 AND followee_id=$3) OR (follower_id=$3 AND followee_id=$2)) AND EXISTS (SELECT 1 FROM ins)
+  ), fr AS (
+    UPDATE friend_requests SET status='cancelled', updated_at=clock_timestamp() WHERE status='pending' AND ((requester_id=$2 AND recipient_id=$3) OR (requester_id=$3 AND recipient_id=$2)) AND EXISTS (SELECT 1 FROM ins)
+  )
+  SELECT EXISTS (SELECT 1 FROM ins)`, uuid.NewString(), actor, input.UserID, min(actor, input.UserID), max(actor, input.UserID)); err != nil {
 			return err
 		}
-		if exists {
+		if !inserted {
 			return NewAPIError(http.StatusConflict, "relationship_conflict")
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO block_relations (id, blocker_id, blocked_id) VALUES ($1,$2,$3)`, uuid.NewString(), actor, input.UserID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM friendships WHERE user_low_id=$1 AND user_high_id=$2`, min(actor, input.UserID), max(actor, input.UserID)); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM follows WHERE (follower_id=$1 AND followee_id=$2) OR (follower_id=$2 AND followee_id=$1)`, actor, input.UserID); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE friend_requests SET status='cancelled', updated_at=clock_timestamp() WHERE status='pending' AND ((requester_id=$1 AND recipient_id=$2) OR (requester_id=$2 AND recipient_id=$1))`, actor, input.UserID); err != nil {
-			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return err
