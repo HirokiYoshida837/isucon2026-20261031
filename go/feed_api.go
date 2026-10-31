@@ -48,8 +48,10 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusBadRequest, "invalid_pagination")
 		}
 		ctx := c.Request().Context()
-		// following は友達の友達の判定を SQL（EXISTS）で行うので、友達の全辺は要らない
-		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, input.Feed != "following")
+		// 友達の全辺（FriendsOfFriends / MutualFriends）を使うのは friends-of-friends だけ。
+		// following は友達の友達の判定を SQL（EXISTS）で行う。public は SQL で visibility='public' に絞られ、
+		// friends は著者が友達なので canView は Friends だけで通る
+		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, input.Feed == "friends-of-friends")
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
 		}
