@@ -58,6 +58,30 @@
 - 計測: SKILL `newrelic-nrql`。秘伝のタレ: SKILL `infra-tuning`（サーバーの `/home/isucon/infra/`）。nginx: SKILL `nginx-site`。agent の ON/OFF: SKILL `newrelic-setup`
 - NewRelic の Go agent は入れたら外さない。止めるのは `newrelic-setup` の `toggle.sh off`
 
+## ローカルからサーバーを操作する
+- 前提: 自分の GitHub 登録済みの鍵でサーバーに入れる。リポジトリの collaborator になっている
+- `~/.ssh/config` に 4 台分を足す。Host 名は `asia1` `europe1` `america1` `asia2`、`HostName` は上の表の Public IP、`User isucon`、`IdentityFile` は自分の鍵
+- 接続確認は `ssh asia1 hostname`。非対話でコマンドを付けて実行してよい
+- 4 台とも `~/webapp` がこのリポジトリ（`main`）の作業コピー。gh は導入済みで認証済み
+- サーバー上の git 更新は `git pull` ではなく `gh repo sync` を使う（`ssh asia1 'cd ~/webapp && gh repo sync --branch main'`）
+- 手元ではブランチを切って PR にする。サーバーへの反映は PR のマージ後か、`REF` を指定したデプロイで行う
+- 各サーバーの `~/Makefile` は `~/webapp/Makefile` に転送するだけの wrapper。git 管理しないので、無ければ各自が ssh で置く（中身は下）
+  ```
+  .DEFAULT_GOAL := all.restart
+  Makefile: ;
+  %:
+  	@$(MAKE) --no-print-directory -C $(HOME)/webapp $@
+  ```
+  - `%:` の下のレシピ行はタブインデント
+- サーバーの `~` で打つコマンド
+  - `make deploy REF=<ブランチ名>`: ブランチをデプロイ（ビルドと再起動）
+  - `make deploy REF=<PR 番号>`: PR をデプロイ
+  - `make isureal.logs` / `make nginx.logs` / `make postgres.logs`: ログを追う
+  - `make nginx.reload`: nginx の設定を反映
+  - `make all.restart`: 全サービスの再起動（引数なしの `make` も同じ。人の OK を待つ）
+- restart は、そのサーバーで enabled のサービスだけが対象。asia2 でアプリは起動しない
+- デプロイ・再起動・サーバー上の削除は「止まるところ」の対象。人の OK を待つ
+
 ## この問題の注意
 - リージョンは固定。利用者は自分のリージョンのサーバーにしか届かない（`RegionMiddleware` は違うと 403）。スコア倍率は europe・america が 1.5
 - 通信はルーター経由で、リージョン間に遅延と帯域制限がある。asia2 の DB へは europe1・america1 から遅延つきで届く
