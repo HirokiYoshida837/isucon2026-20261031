@@ -55,11 +55,12 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		img, err := jpeg.Decode(bytes.NewReader(data))
+		// サイズ検証だけなのでヘッダだけ読む（全画素のデコードは CPU を食う。投稿画像と同じ）
+		img, err := jpeg.DecodeConfig(bytes.NewReader(data))
 		if err != nil {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
-		if img.Bounds().Dx() > 512 || img.Bounds().Dy() > 512 {
+		if img.Width > 512 || img.Height > 512 {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
 
