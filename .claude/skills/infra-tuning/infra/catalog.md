@@ -204,3 +204,14 @@
 - D2. アプリ 2 台 + パス振り分け: A9 のサイト設定
 - D3. 計測の ON/OFF: `measure.sh on|off`（A11 + B8 + NewRelic infra をまとめて）
 - D4. 全部戻す: `restore-all.sh`。1 回分戻す: `rollback.sh -y <名前>`
+
+---
+
+## C. OS（ISUReal 当日追記）
+- 道具: `scripts/os-quiet.sh`（`--dry-run` / `--restore`）。4 台すべてで実行。設定は `sysctl/91-isucon.conf`（`/etc/sysctl.d/91-isucon.conf` に install、主催者の `90-isucon.conf` は触らない）
+- 止めるもの: `apt-daily(-upgrade).timer`、`fwupd-refresh.timer`、`motd-news.timer`、`update-notifier-*.timer`、`unattended-upgrades`、`ModemManager`、`multipathd`、`udisks2`
+- なぜ: `apt-daily-upgrade.timer` が 15:42 JST（競技中）に発火予定。常駐の RSS 約 200MB。ベンチ中の CPU と再起動試験の邪魔を減らす
+- sysctl: `tcp_max_syn_backlog 256 → 8192`、`netdev_max_backlog 1000 → 8192`、`tcp_fin_timeout 60 → 10`
+- 触らない: `amazon-ssm-agent`、`isucon-register`、`envcheck*`、`chrony`、`ssh`、`nginx`、`postgresql`、`isureal-*`、`newrelic-infra`
+- 確認: 実行末尾の `sudo /usr/local/bin/envcheck`、`systemctl list-timers`
+- 戻し方: `os-quiet.sh --restore`（サービスを enable、timer は `--now`、sysctl ファイルを削除して `sysctl --system`）
