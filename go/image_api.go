@@ -14,20 +14,8 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// 画像の生存確認（持ち主が active で、プロフィール・未削除の投稿・有効なリアクションのどれかで使われている）
-const imageAliveSQL = ` (
-     COALESCE(u.profile_image_id = i.id, false)
-     OR EXISTS (
-       SELECT 1 FROM posts p
-       WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
-     )
-     OR EXISTS (
-       SELECT 1 FROM realmojis r
-       JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
-       JOIN users author ON author.id = p.author_id AND author.status = 'active'
-       WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
-     )
-   ) AS alive, i.created_at
+// 画像の生存確認。image_keys.alive をトリガーで保つ（sql/97-image-alive.sql。持ち主が active で、プロフィール・未削除の投稿・有効なリアクションのどれかで使われている）
+const imageAliveSQL = ` i.alive AS alive, i.created_at
    FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
    WHERE i.id = $1
 `

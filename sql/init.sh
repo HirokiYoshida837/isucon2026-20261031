@@ -38,4 +38,5 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--file=93-image-unlogged.sql \
 	--file=94-block-func.sql \
 	--file=95-open-posting-window-func.sql \
-	--file=96-vacuum-users.sql
+	--file=96-vacuum-users.sql \
+	--file=97-image-alive.sql
