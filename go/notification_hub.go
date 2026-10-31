@@ -13,10 +13,9 @@ import (
 )
 
 const (
-	notificationPollInterval   = 500 * time.Millisecond
-	notificationRevalidateEach = 10 // ポーリング 10 回（5 秒）ごとに接続中ユーザーの status / region を見直す
-	notificationClockSamples   = 5  // DB 時刻のずれを測る回数。往復が最短だったものを採る
-	notificationClockSyncEach  = 10 * time.Second
+	notificationRevalidateEvery = 5 * time.Second // 接続中ユーザーの status / region を見直す間隔。ポーリング間隔を縮めても 5 秒のまま
+	notificationClockSamples    = 5               // DB 時刻のずれを測る回数。往復が最短だったものを採る
+	notificationClockSyncEach   = 10 * time.Second
 )
 
 // notificationWaiter は SSE で通知を待っている 1 接続
@@ -33,15 +32,21 @@ type NotificationHub struct {
 	db     *sqlx.DB
 	region string
 
-	mu      sync.Mutex
-	waiters map[*notificationWaiter]struct{}
-	ticks   int
+	pollInterval   time.Duration
+	revalidateEach int // ポーリング何回ごとに revalidate するか
+	mu             sync.Mutex
+	waiters        map[*notificationWaiter]struct{}
+	ticks          int
 
 	clockOffset atomic.Int64 // DB 時刻 - アプリ時刻（ns）。接続ごとに clock_timestamp() を DB へ聞かないための補正
 }
 
-func NewNotificationHub(db *sqlx.DB, region string) *NotificationHub {
-	h := &NotificationHub{db: db, region: region, waiters: make(map[*notificationWaiter]struct{})}
+func NewNotificationHub(db *sqlx.DB, region string, pollInterval time.Duration) *NotificationHub {
+	each := int(notificationRevalidateEvery / pollInterval)
+	if each < 1 {
+		each = 1
+	}
+	h := &NotificationHub{db: db, region: region, pollInterval: pollInterval, revalidateEach: each, waiters: make(map[*notificationWaiter]struct{})}
 	if err := h.syncClock(context.Background()); err != nil {
 		log.Printf("notification hub: clock sync: %v", err)
 	}
@@ -97,7 +102,7 @@ func (h *NotificationHub) reset() {
 }
 
 func (h *NotificationHub) Run(ctx context.Context) {
-	ticker := time.NewTicker(notificationPollInterval)
+	ticker := time.NewTicker(h.pollInterval)
 	defer ticker.Stop()
 	lastSync := time.Now()
 	for {
@@ -191,7 +196,7 @@ func (h *NotificationHub) poll(ctx context.Context) error {
 
 	// 接続中ユーザーの退会・リージョン変更を定期的に見直す（元の実装は毎ポーリングで見ていた）
 	h.ticks++
-	if h.ticks%notificationRevalidateEach == 0 {
+	if h.ticks%h.revalidateEach == 0 {
 		return h.revalidate(ctx)
 	}
 	return nil
