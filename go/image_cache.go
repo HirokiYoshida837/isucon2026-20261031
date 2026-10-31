@@ -7,6 +7,7 @@ import (
 
 // image_objects は INSERT / DELETE のみで中身が変わらないので、本体はキャッシュしてよい。
 // 返してよいかどうか（生存確認）は毎回 DB で確認する。ここでは持たない。
+// メモリに無ければローカルディスク（image_disk.go）を見る。put はディスクにも書く。
 const imageCacheMaxBytes = 256 << 20
 
 type imageCacheEntry struct {
@@ -26,16 +27,28 @@ var imageObjectCache = &imageCache{ll: list.New(), items: map[string]*list.Eleme
 
 func (c *imageCache) get(id string) (imageCacheEntry, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	el, ok := c.items[id]
+	if ok {
+		c.ll.MoveToFront(el)
+		entry := *el.Value.(*imageCacheEntry)
+		c.mu.Unlock()
+		return entry, true
+	}
+	c.mu.Unlock()
+	data, ok := imageDiskGet(id)
 	if !ok {
 		return imageCacheEntry{}, false
 	}
-	c.ll.MoveToFront(el)
-	return *el.Value.(*imageCacheEntry), true
+	c.putMem(id, "image/jpeg", data)
+	return imageCacheEntry{id: id, mediaType: "image/jpeg", data: data}, true
 }
 
 func (c *imageCache) put(id, mediaType string, data []byte) {
+	imageDiskPut("run", id, mediaType, data)
+	c.putMem(id, mediaType, data)
+}
+
+func (c *imageCache) putMem(id, mediaType string, data []byte) {
 	if len(data) > imageCacheMaxBytes/4 {
 		return
 	}

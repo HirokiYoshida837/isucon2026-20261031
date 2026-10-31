@@ -29,6 +29,7 @@ func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		guardReset()
 		imageObjectCache.reset()
+		imageDiskResetRun()
 		rejectedImageSigs.reset()
 		// verifiedImageSigs は消さない。署名は (持ち主の鍵, image_id, exp) だけで決まり、
 		// 持ち主・削除は毎回 DB で見る。起動時のウォームアップの結果を残すため。
