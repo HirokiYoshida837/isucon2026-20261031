@@ -26,3 +26,10 @@ CREATE INDEX IF NOT EXISTS idx_friend_requests_requester_id_recipient_id ON frie
 CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient_id_requester_id ON friend_requests (recipient_id, requester_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_follows_followee_id_follower_id ON follows (followee_id, follower_id);
 CREATE INDEX IF NOT EXISTS idx_posting_windows_local_date ON posting_windows (local_date);
+
+-- reset.sql の DELETE ... WHERE created_at > boundary が realmojis / posts / comments を seq scan していた（計 2.2 秒・316MB をディスクから読む。#179）。
+-- 新しい行の created_at は単調増加なので B-tree の末尾に追記され、INSERT のコストはほぼ増えない。
+-- 大きい表なので、デプロイ前に asia2 で CREATE INDEX CONCURRENTLY で先に作る（init の中では IF NOT EXISTS で素通り）
+CREATE INDEX IF NOT EXISTS idx_realmojis_created_at ON realmojis (created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts (created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments (created_at);
