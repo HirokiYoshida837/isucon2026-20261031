@@ -34,6 +34,10 @@ DELETE FROM image_objects WHERE created_at > (SELECT created_at FROM initial_dat
 -- image_keys（84-image-keys.sql で作る）の境界より後は 84-image-keys.sql が消す
 DELETE FROM users WHERE created_at > (SELECT created_at FROM initial_data_boundary);
 
+-- 復元した users に関わる画像の alive は 97-image-alive.sql が再計算する（このセッションは replica でトリガーが走らない）
+DROP TABLE IF EXISTS pg_temp.restored_users;
+CREATE TEMP TABLE restored_users (id varchar(36));
+WITH restored AS (
 UPDATE users u
 SET display_name = i.display_name, bio = i.bio, profile_image_id = i.profile_image_id, region = i.region,
     account_type = i.account_type, status = i.status, deleted_at = i.deleted_at, updated_at = i.updated_at,
@@ -41,7 +45,9 @@ SET display_name = i.display_name, bio = i.bio, profile_image_id = i.profile_ima
 FROM initial_users i
 WHERE u.id = i.id
   AND (u.display_name, u.bio, u.profile_image_id, u.region, u.account_type, u.status, u.deleted_at, u.updated_at)
-      IS DISTINCT FROM (i.display_name, i.bio, i.profile_image_id, i.region, i.account_type, i.status, i.deleted_at, i.updated_at);
+      IS DISTINCT FROM (i.display_name, i.bio, i.profile_image_id, i.region, i.account_type, i.status, i.deleted_at, i.updated_at)
+RETURNING u.id)
+INSERT INTO restored_users SELECT id FROM restored;
 
 INSERT INTO friend_requests (id, requester_id, recipient_id, status, created_at, updated_at)
 SELECT id, requester_id, recipient_id, status, created_at, updated_at FROM initial_friend_requests;
