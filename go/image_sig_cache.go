@@ -21,7 +21,7 @@ type knownSigKey struct {
 }
 
 type knownSigCache struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex             // 読み取りが多いので get は RLock（#272）
 	items map[knownSigKey][32]byte // 現在の世代
 	prev  map[knownSigKey][32]byte // 1 世代前（nil のことがある。nil map の読み出しは安全）
 }
@@ -31,8 +31,8 @@ var verifiedImageSigs = &knownSigCache{items: map[knownSigKey][32]byte{}}
 // 現在の世代を先に見る
 func (c *knownSigCache) get(imageID string, exp int64) ([32]byte, bool) {
 	k := knownSigKey{imageID: imageID, exp: exp}
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if sig, ok := c.items[k]; ok {
 		return sig, true
 	}
@@ -74,7 +74,7 @@ type verifiedSigKey struct {
 }
 
 type verifiedSigCache struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex                // has は RLock
 	items map[verifiedSigKey]struct{} // 現在の世代
 	prev  map[verifiedSigKey]struct{} // 1 世代前（nil のことがある。nil map の読み出しは安全）
 }
@@ -86,8 +86,8 @@ func newVerifiedSigKey(imageID string, exp int64, sig []byte) verifiedSigKey {
 }
 
 func (c *verifiedSigCache) has(k verifiedSigKey) bool {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if _, ok := c.items[k]; ok {
 		return true
 	}
@@ -134,7 +134,7 @@ type signedURLEntry struct {
 }
 
 type signedURLCache struct {
-	mu    sync.Mutex
+	mu    sync.RWMutex                    // get は RLock
 	items map[signedURLKey]signedURLEntry // 現在の世代
 	prev  map[signedURLKey]signedURLEntry // 1 世代前（nil のことがある）
 }
@@ -143,8 +143,8 @@ var issuedImageURLs = &signedURLCache{items: map[signedURLKey]signedURLEntry{}}
 
 // 現在の世代を先に見る（同じ鍵が両方にあれば新しいほう）
 func (c *signedURLCache) get(k signedURLKey) (signedURLEntry, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if e, ok := c.items[k]; ok {
 		return e, true
 	}
