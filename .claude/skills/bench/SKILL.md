@@ -23,9 +23,9 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
 - 引数なしの `/bench` は、最新の main をデプロイする（`deploy.sh main`）
 - `/bench` を呼んだ時点で、main のデプロイは人の OK 済みとして進める
 - 別ブランチや PR を試すときだけ、`/bench <branch>` / `/bench <PR番号>` のように指定してもらう
-- デプロイ後は ✅ を確認し、聞かずにそのまま下の「流れ」の 2 以降（ベンチ実行 → 結果投稿 → 次の改善候補）まで進める（2026-10-31 すーが決定。`/bench` を呼んだ時点でベンチまで OK 済み）
+- デプロイ後は ✅ を確認し、聞かずにそのまま下の「流れ」の 2 以降（ベンチ実行 → 結果投稿 → 改善候補を issue に積む）まで進める（2026-10-31 すーが決定。`/bench` を呼んだ時点でベンチまで OK 済み）
   - 全ホスト ✅ でなければ（❌ や exit 非 0）ベンチに進まず、原因を報告して止まる
-- 事前に聞かないこと: ブランチの選択、ベンチまで回すか、Discord に投稿するか（投稿する前提）
+- 事前に聞かないこと: ブランチの選択、ベンチまで回すか、Discord に投稿するか（投稿する前提）、改善候補の issue 起票（積む前提）
 
 ## スクリプト（`.claude/skills/bench/`）
 | スクリプト | やること |
@@ -66,8 +66,20 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
    - 完了を確認したら、すぐ `bench-end.sh <スコア> <PASS|FAIL>` で完了時刻を記録する
    - 結果の読み取り: ジョブの詳細ページの `Result`（`FinishedPassed`、`Score`、`Score Breakdown`）と `Stdout` 末尾の JSON（`pass`・`score`・`messages`）。FAIL の表示は未確認で、`pass` と `messages` を見る
 4. `bench-report.sh <スコア> "<変更内容>"`。FAIL のときはポータルのエラー文を `discord-post.sh` で続けて投稿する
-5. 添付の集計結果と NewRelic（SKILL `newrelic-nrql`）、pprof の「アプリの CPU 内訳」から、次の改善候補を 3 つまで挙げる。CPU が張り付いているホストは pprof の app(cum) 上位を、空いているホストは NewRelic の DB 時間を見る
-6. スコアが下がったら、その変更の revert を提案する
+5. 結果から改善候補を探して、あれば issue に積む（`bench-report.sh` の後、聞かずに進める。issue 作成までが OK 済み）
+   - 見るもの: 添付の集計結果、NewRelic（SKILL `newrelic-nrql`）、pprof の「アプリの CPU 内訳」、ベンチの `Stdout`（`messages`・成長ルールの日数と人数）
+   - CPU が張り付いているホストは pprof の app(cum) 上位を、空いているホストは NewRelic の DB 時間と DB 往復数を見る
+   - 候補は最大 3 つ。計測値（ms・%・件数）を根拠に添えられるものだけ挙げる（根拠が無い推測は積まない）
+   - 積む前に重複を確かめる: `gh issue list --state all --search "<キーワード>" --limit 30`
+     - 同じ対象の open issue があれば、新規は作らず `gh issue comment` で今回の数値を追記する
+     - closed や PR で対応済みなら、今回のベンチで再発していない限り積まない
+   - 起票は `gh issue create`。事前に `gh auth status` で `suecideTech` が Active か確かめる（違えば `gh auth switch --user suecideTech`）
+   - タイトル: `【効果:大|中|小・作業:大|中|小】[分類] 対象と狙い`（分類は CPU / ロック / 遅延 / DB / 通知 など。例は #92・#86）
+   - 本文の節: `## 背景`（今回のベンチ番号・スコア・根拠の数値）/ `## 提案` / `## 5 点チェック`（CLAUDE.md の ①〜⑤）/ `## 戻し方` / `関連: #<issue・PR>`
+   - 本文に Webhook URL・キー・env の中身を書かない
+   - 起票・追記した issue の URL を Discord（`discord-post.sh`）と返信に 1 行ずつ載せる
+   - 積んだ issue は実装しない（1 セッション 1 改善。実装は別セッションで `03-implement-one` を使う）
+6. スコアが下がったら、その変更の revert を提案する（revert 用の issue は積まず、提案で止まる）
 
 ## この問題の注意
 - デプロイの前に、ポータルでベンチが `WAITING`・`RUNNING` でないことと、他の人の `make deploy` が走っていないことを確かめる（デプロイはアプリを再起動する。チームで同じ 4 台を触っている）
