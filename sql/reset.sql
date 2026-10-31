@@ -41,3 +41,8 @@ INSERT INTO block_relations (id, blocker_id, blocked_id, created_at)
 SELECT id, blocker_id, blocked_id, created_at FROM initial_block_relations;
 
 COMMIT;
+
+-- index（毎回の初期化で IF NOT EXISTS により保証。再起動後も残る）
+CREATE INDEX IF NOT EXISTS friendships_user_high_id ON friendships(user_high_id);
+CREATE INDEX IF NOT EXISTS block_relations_blocked_id ON block_relations(blocked_id);
+CREATE INDEX IF NOT EXISTS posts_window_posted_at ON posts(posting_window_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
