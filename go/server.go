@@ -50,6 +50,7 @@ func NewServer(config *Config) *echo.Echo {
 	e.IPExtractor = extractClientIP
 
 	e.Use(NewRelicMiddleware())
+	e.Use(sigPushLoadMiddleware)
 	e.Use(ActionLogMiddleware(config.LogLevel, os.Stdout))
 	e.Use(middleware.Recover())
 	e.HTTPErrorHandler = APIErrorHandler
