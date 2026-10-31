@@ -149,6 +149,9 @@ func loginHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.Commit(); err != nil {
 			return err
 		}
+		cached := *session
+		cached.Region = user.Region
+		sessionCache.putLogin(cached)
 		return c.JSON(http.StatusOK, loginResponse{Token: session.Token, User: newSessionUserResponse(user)})
 	}
 }
