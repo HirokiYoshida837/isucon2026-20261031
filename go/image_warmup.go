@@ -2,6 +2,7 @@ package isureal
 
 import (
 	"context"
+	"runtime"
 	"sync"
 	"sync/atomic"
 
@@ -11,7 +12,7 @@ import (
 // 起動時に、このリージョンの初期データの署名付き URL を背景で先に作る（asia1 の imageSignature の CPU を、ベンチ開始前に使う）。
 // 1 goroutine だけで回す。POST /api/initialize の到着（ベンチ開始）で打ち切る。入れた分はそのまま使える。
 // DB が未起動などで失敗したら黙って終わる（アプリの起動は止めない）。
-const warmUpMaxEntries = 90000 // verifiedSigMaxEntries を超えると全消去されるため、その下に収める
+const warmUpMaxEntries = 90000 // 起動時に署名を作る件数（新しい投稿から）
 
 // ウォームアップ中に入れたキャッシュ項目に印を付けるための旗。
 var warmingUp atomic.Bool
@@ -54,6 +55,8 @@ func warmUpImageURLs(ctx context.Context, db *sqlx.DB, region string) {
 		return
 	}
 	defer rows.Close()
+	keys := map[string][]byte{} // 同じ持ち主の鍵は 1 つだけ持つ
+	list := make([]sigReq, 0, warmUpMaxEntries)
 	for rows.Next() {
 		if ctx.Err() != nil {
 			return
@@ -62,10 +65,22 @@ func warmUpImageURLs(ctx context.Context, db *sqlx.DB, region string) {
 		if rows.Scan(&imageID, &secretKeyHash) != nil {
 			return
 		}
-		user := User{SecretKeyHash: secretKeyHash}
-		if user.setImageKey() != nil {
-			continue
+		key, ok := keys[secretKeyHash]
+		if !ok {
+			user := User{SecretKeyHash: secretKeyHash}
+			if user.setImageKey() != nil {
+				continue
+			}
+			key = user.ImageKey
+			keys[secretKeyHash] = key
 		}
-		signedImageURL(user, imageID)
+		list = append(list, sigReq{key: key, imageID: imageID})
 	}
+	setPrefetchList(list) // 初期化のたびの先読みで、先頭の prefetchMax 件を作り直す
+	// 起動時はベンチの前なので asia1 の CPU を全部使ってよい。asia2 に頼めないときは全部自前。
+	pct := signLocalPercent
+	if !signAvailable() {
+		pct = 100
+	}
+	prefetchSigs(ctx, list, pct, runtime.GOMAXPROCS(0), true)
 }

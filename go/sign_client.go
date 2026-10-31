@@ -44,6 +44,13 @@ var (
 	signLocalPercent = 10
 )
 
+func envInt(name string, def int) int {
+	if v, err := strconv.Atoi(envOrDefault(name, "")); err == nil && v >= 0 {
+		return v
+	}
+	return def
+}
+
 func envPercent(name string, def int) int {
 	if v, err := strconv.Atoi(envOrDefault(name, "")); err == nil && v >= 0 && v <= 100 {
 		return v
@@ -131,12 +138,12 @@ func remoteSign(ctx context.Context, peer string, exp int64, reqs []sigReq) ([][
 
 // 依頼のうち localPercent % は asia1 自身で計算し（往復が乗らない）、残りを peer に等分して並列に投げる。
 // 返ってきた分を onSig に渡す。失敗した peer の分は返らない。
-func signAcross(ctx context.Context, exp int64, reqs []sigReq, localPercent int, onSig func(sigReq, []byte)) {
+func signAcross(ctx context.Context, exp int64, reqs []sigReq, localPercent, localWorkers int, onSig func(sigReq, []byte)) {
 	nLocal := len(reqs) * localPercent / 100
 	local, remote := reqs[:nLocal], reqs[nLocal:]
 	var wg sync.WaitGroup
 	if len(local) > 0 {
-		workers := runtime.GOMAXPROCS(0)
+		workers := max(1, localWorkers)
 		for n := 0; n < workers; n++ {
 			wg.Add(1)
 			go func(n int) {
@@ -199,5 +206,5 @@ func prewarmSigs(ctx context.Context, reqs []sigReq) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, signTimeout)
 	defer cancel()
-	signAcross(ctx, exp, miss, signLocalPercent, func(r sigReq, sig []byte) { storeIssued(r.key, r.imageID, exp, sig) })
+	signAcross(ctx, exp, miss, signLocalPercent, runtime.GOMAXPROCS(0), func(r sigReq, sig []byte) { storeIssued(r.key, r.imageID, exp, sig) })
 }

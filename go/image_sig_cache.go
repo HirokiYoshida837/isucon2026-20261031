@@ -5,7 +5,7 @@ import "sync"
 // 検証に成功した (image_id, exp, sig) を覚えて HMAC の再計算を省く。
 // 署名は (持ち主の鍵, image_id, exp) だけで決まり、image_objects の持ち主は変わらない。
 // exp の期限判定と生存確認は呼び出し側で毎回行う。成功したものだけ入れる。
-const verifiedSigMaxEntries = 100000
+const verifiedSigMaxEntries = 400000 // 走行ごとに先読みの分が増えるので余裕を持たせる
 
 type verifiedSigKey struct {
 	imageID string

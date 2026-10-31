@@ -76,7 +76,7 @@ func TestSignAcrossLocalShare(t *testing.T) {
 	for _, pct := range []int{0, 50, 100} {
 		got := map[string][]byte{}
 		var mu sync.Mutex
-		signAcross(context.Background(), 1793415639, reqs, pct, func(r sigReq, sig []byte) {
+		signAcross(context.Background(), 1793415639, reqs, pct, 2, func(r sigReq, sig []byte) {
 			mu.Lock()
 			got[r.imageID] = sig
 			mu.Unlock()
