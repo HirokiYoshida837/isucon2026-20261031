@@ -140,7 +140,8 @@ func feedResponse(c *echo.Context, items []feedItemResponse) error {
 // friends-of-friends のスコア（10*友達のエンゲージメント数 + 3*共通の友達数 + min(connections, 30)）と
 // 並び（score DESC, posted_at DESC, id DESC）、カーソル、先頭 51 件を SQL 1 本で出し、投稿本体を引き直す。
 // 著者は友達と辺を持つ（共通の友達がいる）友達以外のユーザー。canView から公開範囲は public / friends_of_friends。
-// connections は著者の各友達 Y について Y と viewer の共通の友達数を足したもの（Y = viewer は 0）
+// connections は著者の各友達 Y について Y と viewer の共通の友達数を足したもの（Y = viewer は 0）。
+// 共通の友達数は mutual_friends（friendships のトリガーで同じトランザクションの中で追従する）を PK で引く
 func friendsOfFriendsFeed(c *echo.Context, db sqlx.QueryerContext, viewer viewerContext, blocked []string, input getFeedRequest) error {
 	ctx := c.Request().Context()
 	friends := make([]string, 0, len(viewer.Friends))
@@ -152,30 +153,20 @@ func friendsOfFriendsFeed(c *echo.Context, db sqlx.QueryerContext, viewer viewer
 		Score int64  `db:"score"`
 	}
 	if err := sqlx.SelectContext(ctx, db, &ranked, `
-  WITH edges AS (
-    SELECT user_high_id AS id FROM friendships WHERE user_low_id = ANY($2::text[])
-    UNION ALL
-    SELECT user_low_id FROM friendships WHERE user_high_id = ANY($2::text[])
-  ), mutual AS MATERIALIZED (
-    SELECT id, count(*) AS n FROM edges WHERE id <> $1 GROUP BY id
-  ), cand AS MATERIALIZED (
+  WITH cand AS MATERIALIZED (
     SELECT p.id, p.author_id, p.posted_at, m.n AS mutual
-    FROM posts p
-    JOIN mutual m ON m.id = p.author_id
-    JOIN posting_windows w ON w.id = p.posting_window_id
+    FROM posting_windows w
+    JOIN posts p ON p.posting_window_id = w.id AND p.deleted_at IS NULL
+    JOIN mutual_friends m ON m.user_id = $1 AND m.other_id = p.author_id AND m.n > 0
     JOIN users u ON u.id = p.author_id AND u.status = 'active'
-    WHERE p.deleted_at IS NULL AND w.ended_at IS NULL
+    WHERE w.ended_at IS NULL
       AND p.author_id <> ALL($2::text[]) AND p.author_id <> ALL($3::text[])
       AND p.visibility IN ('public', 'friends_of_friends')
   ), conn AS (
     SELECT a.author_id, sum(m.n) AS n
     FROM (SELECT DISTINCT author_id FROM cand) a
-    CROSS JOIN LATERAL (
-      SELECT user_high_id AS id FROM friendships WHERE user_low_id = a.author_id
-      UNION ALL
-      SELECT user_low_id FROM friendships WHERE user_high_id = a.author_id
-    ) f
-    JOIN mutual m ON m.id = f.id
+    JOIN friend_edges f ON f.user_id = a.author_id
+    JOIN mutual_friends m ON m.user_id = $1 AND m.other_id = f.friend_id
     GROUP BY a.author_id
   ), eng AS (
     SELECT e.post_id, count(*) AS n FROM (
