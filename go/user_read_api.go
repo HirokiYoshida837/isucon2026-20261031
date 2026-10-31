@@ -26,6 +26,11 @@ func normalizeSearchText(value string) string {
 	return norm.NFC.String(cases.Fold().String(norm.NFC.String(value)))
 }
 
+// この文字だけで出来た display_name は normalizeSearchText（NFC + case fold）が「ASCII を小文字にする」だけと一致する
+// （印字可能 ASCII・ひらがな・カタカナ・長音・CJK 統合漢字・ハングル音節。結合文字・互換文字は含めない）。
+// DB の lower() と突き合わせて全行一致を確認済み（#75）
+const searchSafeDisplayName = `^[ -~\u3041-\u3096\u30A1-\u30FA\u30FC\u4E00-\u9FFF\uAC00-\uD7A3]*$`
+
 func searchUsersHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		var input searchUsersRequest
@@ -40,16 +45,21 @@ func searchUsersHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		viewer := GetSession(c).UserID
+		query := normalizeSearchText(input.Q)
+		// 全ユーザー（約 5,000 行）を取って Go で絞っていたのを、SQL で候補に絞る（#75）。
+		// username は ^[a-z0-9_.-]+$ なので正規化しても変わらず、strpos で同じ判定になる。
+		// display_name は searchSafeDisplayName の文字だけなら lower() が Go の正規化と一致する。
+		// それ以外（ß・ë・全角英字など）を含む行はそのまま返して、従来どおり下の Go 側で判定する
 		var users []User
 		if err := h.DB.SelectContext(ctx, &users, `
    SELECT `+strings.Join(userColumns, ", ")+` FROM users
    WHERE status='active' AND id<>$1 AND ($2='' OR (username,id)>($2,$3))
      AND id NOT IN (SELECT CASE WHEN blocker_id=$1 THEN blocked_id ELSE blocker_id END FROM block_relations WHERE blocker_id=$1 OR blocked_id=$1)
+     AND (strpos(username, $4) > 0 OR strpos(lower(display_name), $4) > 0 OR display_name !~ $5)
    ORDER BY username, id
-  `, viewer, input.BeforeUsername, input.BeforeID); err != nil {
+  `, viewer, input.BeforeUsername, input.BeforeID, query, searchSafeDisplayName); err != nil {
 			return err
 		}
-		query := normalizeSearchText(input.Q)
 		items := make([]relationshipUserResponse, 0)
 		for _, user := range users {
 			if !strings.Contains(normalizeSearchText(user.Username), query) && !strings.Contains(normalizeSearchText(user.DisplayName), query) {
