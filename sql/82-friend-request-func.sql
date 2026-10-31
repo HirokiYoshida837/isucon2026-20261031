@@ -34,3 +34,45 @@ BEGIN
       RETURNING 0, friend_requests.id::text, friend_requests.status, friend_requests.updated_at;
   END IF;
 END $$;
+
+-- POST /api/friend-requests/:requestId/:action 用。権限判定・ペアロック・存在確認・状態判定・UPDATE/accept を 1 往復で行う。
+-- p_status は accepted / rejected / cancelled（action の検証は呼び出し側）。
+-- 戻り値の code: 0=成功, 403=relationship_action_forbidden, 404=relationship_not_found, 409=relationship_conflict
+CREATE OR REPLACE FUNCTION transition_friend_request(p_actor text, p_request_id text, p_status text, p_friendship_id text)
+RETURNS TABLE(code integer, rid text, rstatus text, rupdated timestamptz)
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_req text;
+  v_rec text;
+  v_cur text;
+BEGIN
+  SELECT fr.requester_id, fr.recipient_id INTO v_req, v_rec FROM friend_requests fr WHERE fr.id = p_request_id;
+  IF NOT FOUND THEN
+    RETURN QUERY SELECT 404, NULL::text, NULL::text, NULL::timestamptz;
+    RETURN;
+  END IF;
+  IF (p_status = 'cancelled' AND p_actor <> v_req) OR (p_status <> 'cancelled' AND p_actor <> v_rec) THEN
+    RETURN QUERY SELECT 403, NULL::text, NULL::text, NULL::timestamptz;
+    RETURN;
+  END IF;
+  PERFORM pg_advisory_xact_lock(hashtextextended(least(v_req, v_rec) || '|' || greatest(v_req, v_rec), 0));
+  IF (SELECT count(*) FROM users WHERE id IN (v_req, v_rec) AND status = 'active') <> 2 THEN
+    RETURN QUERY SELECT 404, NULL::text, NULL::text, NULL::timestamptz;
+    RETURN;
+  END IF;
+  SELECT fr.status INTO v_cur FROM friend_requests fr WHERE fr.id = p_request_id;
+  IF v_cur <> 'pending' THEN
+    RETURN QUERY SELECT 403, NULL::text, NULL::text, NULL::timestamptz;
+    RETURN;
+  END IF;
+  IF p_status = 'accepted' THEN
+    IF EXISTS(SELECT 1 FROM block_relations WHERE (blocker_id = v_req AND blocked_id = v_rec) OR (blocker_id = v_rec AND blocked_id = v_req)) THEN
+      RETURN QUERY SELECT 409, NULL::text, NULL::text, NULL::timestamptz;
+      RETURN;
+    END IF;
+    INSERT INTO friendships (id, user_low_id, user_high_id, source_request_id)
+      VALUES (p_friendship_id, least(v_req, v_rec), greatest(v_req, v_rec), p_request_id);
+  END IF;
+  RETURN QUERY UPDATE friend_requests SET status = p_status, updated_at = clock_timestamp() WHERE id = p_request_id
+    RETURNING 0, friend_requests.id::text, friend_requests.status, friend_requests.updated_at;
+END $$;
