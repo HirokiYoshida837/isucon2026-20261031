@@ -14,7 +14,7 @@ import (
 const ipBanReloadInterval = 200 * time.Millisecond
 
 type IPBanList struct {
-	reloading sync.Mutex
+	startOnce sync.Once
 	snapshot  atomic.Pointer[ipBanSnapshot]
 	local     sync.Map // in-app guard が直接入れた BAN: ip -> time.Time
 }
@@ -36,25 +36,39 @@ type ipBan struct {
 	BannedUntil time.Time `db:"banned_until"`
 }
 
-func (l *IPBanList) Banned(ctx context.Context, db *sqlx.DB, ip string) (bool, error) {
-	snapshot := l.snapshot.Load()
-	if (snapshot == nil || time.Since(snapshot.loadedAt) >= ipBanReloadInterval) && l.reloading.TryLock() {
-		defer l.reloading.Unlock()
-		loaded, err := loadIPBans(ctx, db)
-		if err != nil {
-			return false, err
-		}
+// Start は起動時に同期で 1 回ロードし、以降は ipBanReloadInterval ごとにバックグラウンドで再読込する。
+// 失敗時は前の snapshot を保持する（DB が未起動でも落ちない）。2 回目以降の呼び出しは何もしない。
+func (l *IPBanList) Start(db *sqlx.DB) {
+	l.startOnce.Do(func() {
+		l.reload(db)
+		go func() {
+			t := time.NewTicker(ipBanReloadInterval)
+			defer t.Stop()
+			for range t.C {
+				l.reload(db)
+			}
+		}()
+	})
+}
+
+func (l *IPBanList) reload(db *sqlx.DB) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if loaded, err := loadIPBans(ctx, db); err == nil {
 		l.snapshot.Store(loaded)
-		snapshot = loaded
 	}
+}
+
+func (l *IPBanList) Banned(ip string) bool {
 	if v, ok := l.local.Load(ip); ok && time.Now().Before(v.(time.Time)) {
-		return true, nil
+		return true
 	}
+	snapshot := l.snapshot.Load()
 	if snapshot == nil {
-		return false, nil
+		return false
 	}
 	until, ok := snapshot.bans[ip]
-	return ok && time.Now().Before(until), nil
+	return ok && time.Now().Before(until)
 }
 
 func loadIPBans(ctx context.Context, db *sqlx.DB) (*ipBanSnapshot, error) {
@@ -79,11 +93,7 @@ func extractClientIP(req *http.Request) string {
 func IPBanMiddleware(h *HandlerContext) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
-			banned, err := h.IPBans.Banned(c.Request().Context(), h.DB, c.RealIP())
-			if err != nil {
-				return err
-			}
-			if banned {
+			if h.IPBans.Banned(c.RealIP()) {
 				return NewAPIError(http.StatusForbidden, "ip_banned")
 			}
 			return next(c)

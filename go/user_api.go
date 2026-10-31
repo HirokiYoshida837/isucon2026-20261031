@@ -90,11 +90,11 @@ func registerHandler(h *HandlerContext) echo.HandlerFunc {
 		// テーブルロックと NOT EXISTS は要らない。重複なら ON CONFLICT で 0 行になる
 		var user User
 		err := h.DB.GetContext(ctx, &user, `
-   INSERT INTO users (id, username, secret_key_hash, display_name, region)
-   VALUES ($1::varchar, $2::varchar, $3::text, $4::text, $5::text)
+   INSERT INTO users (id, username, secret_key_hash, display_name, region, search_display)
+   VALUES ($1::varchar, $2::varchar, $3::text, $4::text, $5::text, $6::text)
    ON CONFLICT (username) DO NOTHING
    RETURNING `+strings.Join(userColumns, ", "),
-			uuid.NewString(), input.Username, hex.EncodeToString(hash[:]), input.DisplayName, input.Region)
+			uuid.NewString(), input.Username, hex.EncodeToString(hash[:]), input.DisplayName, input.Region, normalizeSearchText(input.DisplayName))
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusConflict, "username_taken")
 		}
@@ -193,8 +193,13 @@ func updateMeHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusBadRequest, "invalid_profile")
 		}
 		ctx := c.Request().Context()
+		var searchDisplay *string
+		if input.DisplayName != nil {
+			normalized := normalizeSearchText(*input.DisplayName)
+			searchDisplay = &normalized
+		}
 		var user User
-		err := h.DB.GetContext(ctx, &user, `UPDATE users SET display_name = COALESCE($2, display_name), bio = COALESCE($3, bio), region = COALESCE($4, region), updated_at = clock_timestamp() WHERE id = $1 AND status = 'active' RETURNING `+strings.Join(userColumns, ", "), session.UserID, input.DisplayName, input.Bio, input.Region)
+		err := h.DB.GetContext(ctx, &user, `UPDATE users SET display_name = COALESCE($2, display_name), search_display = COALESCE($5, search_display), bio = COALESCE($3, bio), region = COALESCE($4, region), updated_at = clock_timestamp() WHERE id = $1 AND status = 'active' RETURNING `+strings.Join(userColumns, ", "), session.UserID, input.DisplayName, input.Bio, input.Region, searchDisplay)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusNotFound, "account_not_found")
 		}

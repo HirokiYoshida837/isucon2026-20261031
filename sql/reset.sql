@@ -1,5 +1,8 @@
 SET session_replication_role = replica;
 
+-- ユーザー検索用に normalizeSearchText(display_name) を持つ（#122）。NULL の行は初期化の最後に Go が埋める（go/user_search.go）
+ALTER TABLE users ADD COLUMN IF NOT EXISTS search_display text;
+
 BEGIN;
 
 TRUNCATE ip_bans, login_sessions, administrator_sessions, friendships, friend_requests, follows, block_relations;
@@ -21,11 +24,13 @@ BEGIN
   END LOOP;
 END $$;
 DELETE FROM image_objects WHERE created_at > (SELECT created_at FROM initial_data_boundary);
+-- image_keys（84-image-keys.sql で作る）の境界より後は 84-image-keys.sql が消す
 DELETE FROM users WHERE created_at > (SELECT created_at FROM initial_data_boundary);
 
 UPDATE users u
 SET display_name = i.display_name, bio = i.bio, profile_image_id = i.profile_image_id, region = i.region,
-    account_type = i.account_type, status = i.status, deleted_at = i.deleted_at, updated_at = i.updated_at
+    account_type = i.account_type, status = i.status, deleted_at = i.deleted_at, updated_at = i.updated_at,
+    search_display = CASE WHEN u.display_name = i.display_name THEN u.search_display END
 FROM initial_users i
 WHERE u.id = i.id
   AND (u.display_name, u.bio, u.profile_image_id, u.region, u.account_type, u.status, u.deleted_at, u.updated_at)

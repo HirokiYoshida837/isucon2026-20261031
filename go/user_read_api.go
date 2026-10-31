@@ -46,17 +46,17 @@ func searchUsersHandler(h *HandlerContext) echo.HandlerFunc {
 		ctx := c.Request().Context()
 		viewer := GetSession(c).UserID
 		query := normalizeSearchText(input.Q)
-		// 全ユーザー（約 5,000 行）を取って Go で絞っていたのを、SQL で候補に絞る（#75）。
 		// username は ^[a-z0-9_.-]+$ なので正規化しても変わらず、strpos で同じ判定になる。
-		// display_name は searchSafeDisplayName の文字だけなら lower() が Go の正規化と一致する。
-		// それ以外（ß・ë・全角英字など）を含む行はそのまま返して、従来どおり下の Go 側で判定する
+		// display_name は正規化済みの search_display（#122）で判定するので、SQL の条件が下の Go 側の判定と一致し、LIMIT 51 で止められる。
+		// search_display が NULL（初期化前）の行だけ従来の候補条件（searchSafeDisplayName なら lower()、それ以外は Go 側で判定）
 		var users []User
 		if err := h.DB.SelectContext(ctx, &users, `
    SELECT `+strings.Join(userColumns, ", ")+` FROM users
    WHERE status='active' AND id<>$1 AND ($2='' OR (username,id)>($2,$3))
      AND id NOT IN (SELECT CASE WHEN blocker_id=$1 THEN blocked_id ELSE blocker_id END FROM block_relations WHERE blocker_id=$1 OR blocked_id=$1)
-     AND (strpos(username, $4) > 0 OR strpos(lower(display_name), $4) > 0 OR display_name !~ $5)
-   ORDER BY username, id
+     AND (strpos(username, $4) > 0 OR CASE WHEN search_display IS NULL THEN strpos(lower(display_name), $4) > 0 OR display_name !~ $5
+                                          ELSE strpos(search_display, $4) > 0 END)
+   ORDER BY username, id LIMIT 51
   `, viewer, input.BeforeUsername, input.BeforeID, query, searchSafeDisplayName); err != nil {
 			return err
 		}

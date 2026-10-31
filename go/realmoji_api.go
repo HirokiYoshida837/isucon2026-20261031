@@ -55,12 +55,11 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		// サイズ検証だけなのでヘッダだけ読む（全画素のデコードは CPU を食う。投稿画像と同じ）
-		img, err := jpeg.DecodeConfig(bytes.NewReader(data))
+		img, err := jpeg.Decode(bytes.NewReader(data))
 		if err != nil {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
-		if img.Width > 512 || img.Height > 512 {
+		if img.Bounds().Dx() > 512 || img.Bounds().Dy() > 512 {
 			return NewAPIError(http.StatusBadRequest, "invalid_realmoji")
 		}
 
@@ -99,6 +98,9 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.GetContext(ctx, &reaction, `
    WITH image AS (
      INSERT INTO image_objects(id,owner_user_id,data,media_type) VALUES($4,$3,$6,'image/jpeg')
+     RETURNING id,created_at,owner_user_id
+   ), image_key AS (
+     INSERT INTO image_keys(id,created_at,owner_user_id) SELECT id,created_at,owner_user_id FROM image
    ), r AS (
      INSERT INTO realmojis(id,post_id,reactor_id,image_id,reaction_type,created_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())
      RETURNING id,post_id,reactor_id,image_id,reaction_type,created_at,replaced_at,deleted_at
