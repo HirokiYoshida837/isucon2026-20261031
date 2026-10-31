@@ -119,8 +119,7 @@ func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID str
 	}
 	if err := sqlx.GetContext(ctx, db, &row, `
   WITH friend_ids AS MATERIALIZED (
-    SELECT CASE WHEN user_low_id = $1 THEN user_high_id ELSE user_low_id END AS id
-    FROM friendships WHERE user_low_id = $1 OR user_high_id = $1
+    SELECT friend_id AS id FROM friend_edges WHERE user_id = $1
   )
   SELECT `+strings.Join(userColumns, ", ")+`,
     EXISTS(
@@ -136,8 +135,8 @@ func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID str
     ), '') AS blocked_ids,
     COALESCE((SELECT string_agg(id, ',') FROM friend_ids), '') AS friend_ids,
     CASE WHEN $2::bool THEN COALESCE((
-      SELECT string_agg(user_low_id || ',' || user_high_id, ',') FROM friendships
-      WHERE user_low_id = ANY(ARRAY(SELECT id FROM friend_ids)) OR user_high_id = ANY(ARRAY(SELECT id FROM friend_ids))
+      SELECT string_agg(friend_id, ',') FROM friend_edges
+      WHERE user_id = ANY(ARRAY(SELECT id FROM friend_ids))
     ), '') ELSE '' END AS friend_edges
   FROM users u WHERE u.id = $1 AND u.status = 'active'
  `, viewerID, withEdges); err != nil {
@@ -154,20 +153,11 @@ func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID str
 	for _, id := range splitIDs(row.FriendIDs) {
 		viewer.Friends[id] = true
 	}
-	edges := splitIDs(row.FriendEdges)
-	for i := 0; i+1 < len(edges); i += 2 {
-		low, high := edges[i], edges[i+1]
-		if viewer.Friends[low] {
-			viewer.FriendsOfFriends[high] = true
-			if high != viewer.ID {
-				viewer.MutualFriends[high]++
-			}
-		}
-		if viewer.Friends[high] {
-			viewer.FriendsOfFriends[low] = true
-			if low != viewer.ID {
-				viewer.MutualFriends[low]++
-			}
+	// friend_edges は両方向の行なので、友達 f の友達 x を 1 行ずつ数える（f-x の辺 1 本につき x 側に 1 回）
+	for _, id := range splitIDs(row.FriendEdges) {
+		viewer.FriendsOfFriends[id] = true
+		if id != viewer.ID {
+			viewer.MutualFriends[id]++
 		}
 	}
 	return viewer, nil
@@ -221,15 +211,12 @@ func getPostForViewer(ctx context.Context, db sqlx.QueryerContext, viewerID, pos
       WHERE (b.blocker_id = $2 AND b.blocked_id = p.author_id) OR (b.blocker_id = p.author_id AND b.blocked_id = $2)
     ) AS blocked,
     EXISTS(
-      SELECT 1 FROM friendships f
-      WHERE (f.user_low_id = $2 AND f.user_high_id = p.author_id) OR (f.user_low_id = p.author_id AND f.user_high_id = $2)
+      SELECT 1 FROM friend_edges f WHERE f.user_id = $2 AND f.friend_id = p.author_id
     ) AS friends,
     EXISTS(
-      SELECT 1 FROM friendships a
-      JOIN friendships b
-        ON (b.user_low_id = CASE WHEN a.user_low_id = $2 THEN a.user_high_id ELSE a.user_low_id END AND b.user_high_id = p.author_id)
-        OR (b.user_high_id = CASE WHEN a.user_low_id = $2 THEN a.user_high_id ELSE a.user_low_id END AND b.user_low_id = p.author_id)
-      WHERE a.user_low_id = $2 OR a.user_high_id = $2
+      SELECT 1 FROM friend_edges a
+      JOIN friend_edges b ON b.user_id = a.friend_id AND b.friend_id = p.author_id
+      WHERE a.user_id = $2
     ) AS friend_of_friend
   FROM posts p
   JOIN posting_windows w ON w.id = p.posting_window_id
