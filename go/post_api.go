@@ -206,21 +206,14 @@ func getPostHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		ctx := c.Request().Context()
-		post, err := getPostWithAuthor(ctx, h.DB, input.PostID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusNotFound, "post_not_found")
-		}
-		if err != nil {
-			return err
-		}
-		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID)
+		row, err := getPostForViewer(ctx, h.DB, GetSession(c).UserID, input.PostID)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
-		if err != nil || !viewer.canView(post.Post) {
+		if err != nil || !row.canView() {
 			return NewAPIError(http.StatusNotFound, "post_not_found")
 		}
-		return c.JSON(http.StatusOK, getPostResponse(newPostResponse(post.Post, post.Author)))
+		return c.JSON(http.StatusOK, getPostResponse(newPostResponse(row.Post, row.Author)))
 	}
 }
 

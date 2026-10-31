@@ -192,22 +192,98 @@ func (viewer viewerContext) canView(post Post) bool {
 	}
 }
 
+// postAccess は投稿 1 件の閲覧判定に必要な、閲覧者と投稿者の関係だけ。
+// loadViewerContext は友達の全辺まで組み立てるので、1 投稿の判定には重い（#76）
+type postAccess struct {
+	ViewerActive   bool `db:"viewer_active"`
+	IsAuthor       bool `db:"is_author"`
+	HasPostedToday bool `db:"has_posted_today"`
+	Blocked        bool `db:"blocked"`
+	Friends        bool `db:"friends"`
+	FriendOfFriend bool `db:"friend_of_friend"`
+}
+
+type postForViewer struct {
+	PostWithAuthor
+	postAccess
+}
+
+// getPostForViewer は投稿・投稿者・閲覧者との関係を 1 クエリで取る。投稿が無い（削除済み・投稿者が退会）なら sql.ErrNoRows
+func getPostForViewer(ctx context.Context, db sqlx.QueryerContext, viewerID, postID string) (postForViewer, error) {
+	var row postForViewer
+	err := sqlx.GetContext(ctx, db, &row, `
+  SELECT `+postColumns+`, `+userColumnsAs("u", "author")+`,
+    v.id IS NOT NULL AS viewer_active,
+    p.author_id = $2 AS is_author,
+    COALESCE(v.has_posted_today, false) AS has_posted_today,
+    EXISTS(
+      SELECT 1 FROM block_relations b
+      WHERE (b.blocker_id = $2 AND b.blocked_id = p.author_id) OR (b.blocker_id = p.author_id AND b.blocked_id = $2)
+    ) AS blocked,
+    EXISTS(
+      SELECT 1 FROM friendships f
+      WHERE (f.user_low_id = $2 AND f.user_high_id = p.author_id) OR (f.user_low_id = p.author_id AND f.user_high_id = $2)
+    ) AS friends,
+    EXISTS(
+      SELECT 1 FROM friendships a
+      JOIN friendships b
+        ON (b.user_low_id = CASE WHEN a.user_low_id = $2 THEN a.user_high_id ELSE a.user_low_id END AND b.user_high_id = p.author_id)
+        OR (b.user_high_id = CASE WHEN a.user_low_id = $2 THEN a.user_high_id ELSE a.user_low_id END AND b.user_low_id = p.author_id)
+      WHERE a.user_low_id = $2 OR a.user_high_id = $2
+    ) AS friend_of_friend
+  FROM posts p
+  JOIN posting_windows w ON w.id = p.posting_window_id
+  JOIN users u ON u.id = p.author_id AND u.status = 'active'
+  LEFT JOIN LATERAL (
+    SELECT v.id, EXISTS(
+      SELECT 1 FROM posts vp
+      JOIN posting_windows posted ON posted.id = vp.posting_window_id
+      JOIN posting_windows current ON current.region = v.region AND current.ended_at IS NULL
+                                  AND current.local_date = posted.local_date
+      WHERE vp.author_id = v.id AND vp.deleted_at IS NULL
+    ) AS has_posted_today
+    FROM users v WHERE v.id = $2 AND v.status = 'active'
+  ) v ON true
+  WHERE p.id = $1 AND p.deleted_at IS NULL
+ `, postID, viewerID)
+	if err != nil {
+		return row, err
+	}
+	return row, row.Author.setImageKey()
+}
+
+// canView は viewerContext.canView と同じ判定
+func (row postForViewer) canView() bool {
+	if !row.ViewerActive {
+		return false
+	}
+	if row.IsAuthor {
+		return true
+	}
+	if row.WindowEndedAt != nil || !row.HasPostedToday || row.Blocked {
+		return false
+	}
+	switch row.Visibility {
+	case "public":
+		return true
+	case "friends":
+		return row.Friends
+	case "friends_of_friends":
+		return row.Friends || row.FriendOfFriend
+	default:
+		return false
+	}
+}
+
 func canViewPost(ctx context.Context, db sqlx.QueryerContext, viewerID, postID string) (bool, error) {
-	post, err := getPostWithAuthor(ctx, db, postID)
+	row, err := getPostForViewer(ctx, db, viewerID, postID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	viewer, err := loadViewerContext(ctx, db, viewerID)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return viewer.canView(post.Post), nil
+	return row.canView(), nil
 }
 
 func getFriendIDs(ctx context.Context, db sqlx.QueryerContext, userID string) ([]string, error) {

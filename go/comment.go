@@ -40,28 +40,21 @@ func selectCommentsWithAuthor(ctx context.Context, db sqlx.QueryerContext, condi
 }
 
 func canComment(ctx context.Context, db sqlx.QueryerContext, viewerID, postID string) (bool, error) {
-	post, err := getPostWithAuthor(ctx, db, postID)
+	row, err := getPostForViewer(ctx, db, viewerID, postID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
 	if err != nil {
 		return false, err
 	}
-	viewer, err := loadViewerContext(ctx, db, viewerID)
-	if errors.Is(err, sql.ErrNoRows) {
+	if !row.canView() || row.WindowEndedAt != nil {
 		return false, nil
 	}
-	if err != nil {
-		return false, err
+	if row.IsAuthor {
+		return row.HasPostedToday, nil
 	}
-	if !viewer.canView(post.Post) || post.WindowEndedAt != nil {
-		return false, nil
-	}
-	if viewer.ID == post.AuthorID {
-		return viewer.HasPostedToday, nil
-	}
-	if post.Visibility == "public" {
+	if row.Visibility == "public" {
 		return true, nil
 	}
-	return viewer.Friends[post.AuthorID], nil
+	return row.Friends, nil
 }
