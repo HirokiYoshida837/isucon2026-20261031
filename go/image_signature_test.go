@@ -5,9 +5,42 @@ import (
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
+	mrand "math/rand/v2"
+	"net/url"
 	"strconv"
 	"testing"
 )
+
+// 変更前の buildSignedURL（url.Values.Encode 版）。出力が 1 バイトも変わらないことを確かめる
+func buildSignedURLOld(imageID string, exp int64, sig []byte) string {
+	query := url.Values{
+		"exp": {strconv.FormatInt(exp, 10)},
+		"sig": {base64.RawURLEncoding.EncodeToString(sig)},
+	}
+	return "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
+}
+
+func TestBuildSignedURLMatchesOld(t *testing.T) {
+	ids := []string{"", "019a2b3c-4d5e-7f80-9a1b-2c3d4e5f6071", "a b/c?d&e=f#g%h+i", "日本語.png", "..", "~!*'();:@$,[]"}
+	for range 2000 {
+		b := make([]byte, mrand.IntN(40))
+		rand.Read(b)
+		ids = append(ids, string(b))
+	}
+	exps := []int64{0, -1, 1, 1793415639, 1<<63 - 1, -1 << 63}
+	for i, id := range ids {
+		exp := exps[i%len(exps)]
+		if i >= len(exps) {
+			exp = mrand.Int64() - mrand.Int64()
+		}
+		sig := make([]byte, mrand.IntN(64))
+		rand.Read(sig)
+		if got, want := buildSignedURL(id, exp, sig), buildSignedURLOld(id, exp, sig); got != want {
+			t.Fatalf("url differs for %q exp=%d: got %q want %q", id, exp, got, want)
+		}
+	}
+}
 
 // 変更前の実装（毎回 hmac.New する）。出力が一致することを確かめる
 func imageSignatureOld(key []byte, imageID string, exp int64) []byte {
