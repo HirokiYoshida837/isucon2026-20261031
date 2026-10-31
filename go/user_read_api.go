@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
-	"slices"
 	"strings"
 
 	"github.com/labstack/echo/v5"
@@ -42,20 +41,18 @@ func searchUsersHandler(h *HandlerContext) echo.HandlerFunc {
 		ctx := c.Request().Context()
 		viewer := GetSession(c).UserID
 		var users []User
-		if err := h.DB.SelectContext(ctx, &users, `SELECT `+strings.Join(userColumns, ", ")+` FROM users WHERE status='active' AND id<>$1 AND ($2='' OR (username,id)>($2,$3)) ORDER BY username, id`, viewer, input.BeforeUsername, input.BeforeID); err != nil {
-			return err
-		}
-		blocked, err := getBlockedUserIDs(ctx, h.DB, viewer)
-		if err != nil {
+		if err := h.DB.SelectContext(ctx, &users, `
+   SELECT `+strings.Join(userColumns, ", ")+` FROM users
+   WHERE status='active' AND id<>$1 AND ($2='' OR (username,id)>($2,$3))
+     AND id NOT IN (SELECT CASE WHEN blocker_id=$1 THEN blocked_id ELSE blocker_id END FROM block_relations WHERE blocker_id=$1 OR blocked_id=$1)
+   ORDER BY username, id
+  `, viewer, input.BeforeUsername, input.BeforeID); err != nil {
 			return err
 		}
 		query := normalizeSearchText(input.Q)
 		items := make([]relationshipUserResponse, 0)
 		for _, user := range users {
 			if !strings.Contains(normalizeSearchText(user.Username), query) && !strings.Contains(normalizeSearchText(user.DisplayName), query) {
-				continue
-			}
-			if blocked[user.ID] {
 				continue
 			}
 			if err := user.setImageKey(); err != nil {
@@ -91,25 +88,28 @@ func getUserHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		viewer := GetSession(c).UserID
-		user, err := getUser(ctx, h.DB, input.UserID)
-		if errors.Is(err, sql.ErrNoRows) {
+		var row struct {
+			User
+			Blocked bool `db:"blocked"`
+			Friend  bool `db:"friend"`
+		}
+		err := h.DB.GetContext(ctx, &row, `
+   SELECT `+strings.Join(userColumns, ", ")+`,
+    EXISTS(SELECT 1 FROM block_relations WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)) AS blocked,
+    EXISTS(SELECT 1 FROM friendships WHERE (user_low_id=$1 AND user_high_id=$2) OR (user_low_id=$2 AND user_high_id=$1)) AS friend
+   FROM users WHERE id = $2 AND status = 'active'
+  `, viewer, input.UserID)
+		if errors.Is(err, sql.ErrNoRows) || row.Blocked {
 			return NewAPIError(http.StatusNotFound, "relationship_not_found")
 		}
 		if err != nil {
 			return err
 		}
-		blocked, err := isBlocked(ctx, h.DB, viewer, user.ID)
-		if err != nil {
+		user := row.User
+		if err := user.setImageKey(); err != nil {
 			return err
 		}
-		if blocked {
-			return NewAPIError(http.StatusNotFound, "relationship_not_found")
-		}
-		friends, err := getFriendIDs(ctx, h.DB, viewer)
-		if err != nil {
-			return err
-		}
-		if user.AccountType != "certified_public" && !slices.Contains(friends, user.ID) {
+		if user.AccountType != "certified_public" && !row.Friend {
 			user.Bio = ""
 		}
 		return c.JSON(http.StatusOK, getUserResponse(newRelationshipUserResponse(user)))
