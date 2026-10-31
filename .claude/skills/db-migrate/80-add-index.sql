@@ -1,0 +1,7 @@
+-- index の追加（PostgreSQL 16）。init.sh が reset.sql の後に毎回流す
+-- 何回流しても同じ結果になるよう、必ず IF NOT EXISTS を付ける
+-- 名前だけで有無を見るので、定義を変えるときは名前も変える
+-- CONCURRENTLY は書かない（重いテーブルはデプロイ前に idx.sh apply で先に貼る）
+--
+-- 例:
+--   CREATE INDEX IF NOT EXISTS idx_posts_author_id_created_at ON posts (author_id, created_at DESC);
