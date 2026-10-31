@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -14,12 +15,14 @@ import (
 const (
 	notificationPollInterval   = 500 * time.Millisecond
 	notificationRevalidateEach = 10 // ポーリング 10 回（5 秒）ごとに接続中ユーザーの status / region を見直す
+	notificationClockSamples   = 5  // DB 時刻のずれを測る回数。往復が最短だったものを採る
+	notificationClockSyncEach  = 10 * time.Second
 )
 
 // notificationWaiter は SSE で通知を待っている 1 接続
 type notificationWaiter struct {
 	userID        string
-	connectedAt   time.Time                      // DB の clock_timestamp()。これより後に作られた通知だけ届ける
+	connectedAt   time.Time                      // DB 時刻（Hub.now）。これより後に作られた通知だけ届ける
 	checkedWindow string                         // この投稿期間については通知を探し終えた（行が無かった）
 	ch            chan *getNotificationsResponse // nil を受け取ったら接続を閉じる
 }
@@ -33,10 +36,41 @@ type NotificationHub struct {
 	mu      sync.Mutex
 	waiters map[*notificationWaiter]struct{}
 	ticks   int
+
+	clockOffset atomic.Int64 // DB 時刻 - アプリ時刻（ns）。接続ごとに clock_timestamp() を DB へ聞かないための補正
 }
 
 func NewNotificationHub(db *sqlx.DB, region string) *NotificationHub {
-	return &NotificationHub{db: db, region: region, waiters: make(map[*notificationWaiter]struct{})}
+	h := &NotificationHub{db: db, region: region, waiters: make(map[*notificationWaiter]struct{})}
+	if err := h.syncClock(context.Background()); err != nil {
+		log.Printf("notification hub: clock sync: %v", err)
+	}
+	return h
+}
+
+// now は DB の clock_timestamp() 相当の現在時刻（アプリ時刻 + 測ったずれ）
+func (h *NotificationHub) now() time.Time {
+	return time.Now().Add(time.Duration(h.clockOffset.Load()))
+}
+
+// syncClock は DB とアプリの時刻差を測る。往復が最短の標本を採る（誤差は往復の半分以内）
+func (h *NotificationHub) syncClock(ctx context.Context) error {
+	best := time.Duration(-1)
+	var offset time.Duration
+	for i := 0; i < notificationClockSamples; i++ {
+		var dbNow time.Time
+		t0 := time.Now()
+		if err := h.db.GetContext(ctx, &dbNow, `SELECT clock_timestamp()`); err != nil {
+			return err
+		}
+		rtt := time.Since(t0)
+		if best < 0 || rtt < best {
+			best = rtt
+			offset = dbNow.Sub(t0.Add(rtt / 2))
+		}
+	}
+	h.clockOffset.Store(int64(offset))
+	return nil
 }
 
 func (h *NotificationHub) add(userID string, connectedAt time.Time) *notificationWaiter {
@@ -65,11 +99,18 @@ func (h *NotificationHub) reset() {
 func (h *NotificationHub) Run(ctx context.Context) {
 	ticker := time.NewTicker(notificationPollInterval)
 	defer ticker.Stop()
+	lastSync := time.Now()
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+		}
+		if time.Since(lastSync) >= notificationClockSyncEach {
+			lastSync = time.Now()
+			if err := h.syncClock(ctx); err != nil && ctx.Err() == nil {
+				log.Printf("notification hub: clock sync: %v", err)
+			}
 		}
 		if err := h.poll(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("notification hub: %v", err)
