@@ -10,18 +10,6 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
-// readSized はサイズが分かっていれば先に確保して 1 回で読む（io.ReadAll の伸長とゼロ埋めを省く。#183）
-func readSized(r io.Reader, n int64) ([]byte, error) {
-	if n <= 0 {
-		return io.ReadAll(r)
-	}
-	buf := make([]byte, n)
-	if _, err := io.ReadFull(r, buf); err != nil {
-		return nil, err
-	}
-	return buf, nil
-}
-
 func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		if c.Request().Header.Get("Content-Type") != "image/jpeg" {
@@ -29,7 +17,7 @@ func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 			io.Copy(io.Discard, c.Request().Body)
 			return NewAPIError(http.StatusUnsupportedMediaType, "unsupported_media_type")
 		}
-		data, err := readSized(c.Request().Body, c.Request().ContentLength)
+		data, err := readBodySized(c.Request().Body, c.Request().ContentLength)
 		if err != nil {
 			return err
 		}
@@ -83,4 +71,18 @@ SELECT count(*) FROM old`, userID); err != nil {
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
+}
+
+// 大きさが分かっている body をその分だけ先に確保して 1 回で読む（#183）。
+// io.ReadAll は 512B から伸ばしながら読むので、32MB 級の body では伸長とゼロ埋めで body の 4〜5 倍を確保していた
+// （asia1 の CPU 12.7%・アロケーションの 70%）。大きさが分からない・大きすぎるときは今まで通り io.ReadAll
+func readBodySized(r io.Reader, size int64) ([]byte, error) {
+	if size <= 0 || size > 64<<20 {
+		return io.ReadAll(r)
+	}
+	buf := make([]byte, size)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
 }

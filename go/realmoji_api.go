@@ -50,7 +50,7 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		defer file.Close()
-		data, err := readSized(file, input.Image.Size)
+		data, err := readBodySized(file, input.Image.Size)
 		if err != nil {
 			return err
 		}
