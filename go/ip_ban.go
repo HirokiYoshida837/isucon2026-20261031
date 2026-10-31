@@ -46,25 +46,6 @@ func (l *IPBanList) Banned(ctx context.Context, db *sqlx.DB, ip string) (bool, e
 	return ok && time.Now().Before(until), nil
 }
 
-// add は BAN した IP をこのサーバーのスナップショットに即反映する（他サーバーへは DB 経由の再読込で伝わる）。
-// 再読込と直列にするため reloading を取る。期限は GREATEST と同じく遅い方を残す。
-func (l *IPBanList) add(ip string, until time.Time) {
-	l.reloading.Lock()
-	defer l.reloading.Unlock()
-	current := l.snapshot.Load()
-	next := &ipBanSnapshot{bans: make(map[string]time.Time)}
-	if current != nil {
-		next.loadedAt = current.loadedAt
-		for k, v := range current.bans {
-			next.bans[k] = v
-		}
-	}
-	if existing, ok := next.bans[ip]; !ok || until.After(existing) {
-		next.bans[ip] = until
-	}
-	l.snapshot.Store(next)
-}
-
 func loadIPBans(ctx context.Context, db *sqlx.DB) (*ipBanSnapshot, error) {
 	var rows []ipBan
 	if err := db.SelectContext(ctx, &rows, `SELECT ip, banned_until FROM ip_bans WHERE banned_until > clock_timestamp()`); err != nil {
