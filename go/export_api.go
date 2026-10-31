@@ -49,7 +49,11 @@ func exportPostsHandler(h *HandlerContext) echo.HandlerFunc {
 			}
 		}
 		if len(missing) > 0 {
-			rows, err := h.DB.QueryxContext(ctx, `SELECT id, media_type, data FROM image_objects WHERE id = ANY($1)`, missing)
+			// image_objects は id だけだと全パーティションを見るので、image_keys の created_at を足して引く（#152）
+			rows, err := h.DB.QueryxContext(ctx, `
+   SELECT o.id, o.media_type, o.data
+   FROM image_keys k JOIN image_objects o ON o.id = k.id AND o.created_at = k.created_at
+   WHERE k.id = ANY($1)`, missing)
 			if err != nil {
 				return err
 			}
