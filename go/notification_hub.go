@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	notificationPollInterval   = 500 * time.Millisecond
+	notificationPollInterval   = 100 * time.Millisecond
 	notificationRevalidateEach = 10 // ポーリング 10 回（5 秒）ごとに接続中ユーザーの status / region を見直す
 	notificationClockSamples   = 5  // DB 時刻のずれを測る回数。往復が最短だったものを採る
 	notificationClockSyncEach  = 10 * time.Second
