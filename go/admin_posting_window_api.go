@@ -43,7 +43,8 @@ func openPostingWindowHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		defer tx.Rollback()
-		if _, err := tx.ExecContext(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+		// users のテーブルロックは外す（全書き込みを止めていた）。同じリージョンの同時オープンだけ advisory lock で直列にする
+		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('posting_window_open:' || $1::text))`, region); err != nil {
 			return err
 		}
 		var state struct {
