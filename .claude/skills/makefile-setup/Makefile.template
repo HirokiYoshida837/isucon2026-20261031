@@ -1,0 +1,69 @@
+# Makefile — <<アプリ名>> 競技サーバー操作
+# isucon2026-prep の .claude/skills/makefile-setup から生成。<<...>> を埋めたらこの2行は消してよい
+# レシピの行は必ずタブインデント（スペースだと `*** missing separator` になる）
+
+.PHONY: all.restart
+all.restart: mysql.restart nginx.restart <<app>>.restart
+
+
+# nginx
+
+.PHONY: nginx.restart
+nginx.restart:
+	sudo systemctl restart nginx
+
+.PHONY: nginx.logs
+nginx.logs:
+	journalctl -f -u nginx
+
+
+# mysql
+
+.PHONY: mysql.restart
+mysql.restart:
+	sudo systemctl restart mysql
+
+.PHONY: mysql.logs
+mysql.logs:
+	journalctl -f -u mysql
+
+
+# <<app>>（Go ソース: <<Go ソースのパス>>）
+
+.PHONY: <<app>>.build
+<<app>>.build:
+	cd <<Go ソースのパス>> && go build -o <<バイナリ名>>
+
+.PHONY: <<app>>.restart
+<<app>>.restart:
+	sudo systemctl restart <<systemd unit 名>>
+
+.PHONY: <<app>>.logs
+<<app>>.logs:
+	journalctl -f -u <<systemd unit 名>>
+
+# デプロイ: REF が数字なら PR 番号として gh pr checkout、それ以外はブランチ名として gh repo sync
+# bench/deploy.sh が `REF=<branch|pr番号> make deploy` の形で各サーバーで呼ぶ（既定 main）
+# ターゲット名は deploy のままにする（ISU_DEPLOY_CMD の既定が `make deploy` のため）
+REF ?= main
+
+.PHONY: deploy
+deploy:
+	if echo '$(REF)' | grep -qE '^[0-9]+$$'; then \
+		gh pr checkout $(REF) --force; \
+	else \
+		gh repo sync --branch $(REF) --force; \
+		git switch $(REF); \
+	fi
+	$(MAKE) <<app>>.build
+	$(MAKE) <<app>>.restart
+
+
+# 追加サービスがあれば、この形を複製して増やす（例: マッチング・決済モック）
+# .PHONY: <<service>>.restart
+# <<service>>.restart:
+# 	sudo systemctl restart <<service>>.service
+#
+# .PHONY: <<service>>.logs
+# <<service>>.logs:
+# 	journalctl -f -u <<service>>.service

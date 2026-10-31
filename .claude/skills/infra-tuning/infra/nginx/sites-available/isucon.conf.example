@@ -1,0 +1,101 @@
+# サイト設定の例（/etc/nginx/sites-available/<問題名>.conf にマージして使う）
+# そのまま置き換えず、問題の元ファイルに「差分だけ」足すこと（証明書パス・server_name・ポート・root が問題ごとに違うため）。
+# 配置: ./apply-site.sh <このファイルを問題用に直したもの>
+# 過去問の元ファイル例: isucon14 の isuride.conf
+#   https://github.com/isucon/isucon14/blob/main/provisioning/ansible/roles/nginx/files/etc/nginx/sites-available/isuride.conf
+# 下の <...> は問題に合わせて書き換える。
+
+##
+# upstream（アプリ）。3 台構成 = サーバー1: nginx + app、サーバー2: app、サーバー3: DB
+##
+
+# 軽い処理の受け先。2 台に分散する。least_conn は「処理中の接続が少ない台」に回すので、重い処理を抱えた台には自然と行きにくくなる。
+upstream app_light {
+    least_conn;
+    server 127.0.0.1:8080;
+    server <192.168.0.12>:8080;
+
+    # upstream への接続を使い回す。毎リクエストの TCP 接続とポート消費が無くなる。値はワーカーごとのアイドル接続数。
+    keepalive 64;
+    keepalive_requests 10000;
+    keepalive_timeout 60s;
+}
+
+# CPU の重い処理の受け先。サーバー2 に固定する（alp / NewRelic で重いと分かったエンドポイントだけここへ）。
+# サーバー2 だけにオンメモリキャッシュを持たせる、といった使い方もできる。
+upstream app_heavy {
+    server <192.168.0.12>:8080;
+    keepalive 64;
+    keepalive_requests 10000;
+    keepalive_timeout 60s;
+}
+
+server {
+    # http2 は 1.24 ではここに書く。多重化で接続数が減る（ベンチャーが h2 を使うかは要確認）。
+    listen 443 ssl http2;
+    server_name <example.isucon.net> <*.example.isucon.net>;
+
+    ssl_certificate     /etc/nginx/tls/<cert>.crt;
+    ssl_certificate_key /etc/nginx/tls/<cert>.key;
+    ssl_protocols TLSv1.3;
+    ssl_prefer_server_ciphers off;
+
+    client_max_body_size 10m;
+    root /home/isucon/webapp/public/;
+
+    ##
+    # 静的ファイルを nginx から返す（アプリを通さないと Go の CPU が空く）
+    ##
+
+    # 拡張子付きの URL をアプリが返す問題（例: /image/123.jpg）では、拡張子ではなくディレクトリで絞る。
+    location ~ ^/(css|js|img|assets)/ {
+        expires 1d;
+        add_header Cache-Control "public";
+        access_log off;
+        try_files $uri =404;
+    }
+
+    ##
+    # パス振り分け: 重い処理だけ app_heavy、残りは app_light（具体的なパスを先に書く）
+    ##
+
+    location = /api/<heavy-endpoint> {
+        include /etc/nginx/isucon/proxy_keepalive.conf;
+        proxy_pass http://app_heavy;
+    }
+    location ~ ^/api/<heavy-prefix>/ {
+        include /etc/nginx/isucon/proxy_keepalive.conf;
+        proxy_pass http://app_heavy;
+    }
+
+    location /api/ {
+        include /etc/nginx/isucon/proxy_keepalive.conf;
+        proxy_pass http://app_light;
+    }
+
+    # SPA のフロント。存在しないパスは index.html を返す（API だけの問題なら消す）。
+    location / {
+        try_files $uri /index.html;
+    }
+
+    ##
+    # よく使う応用（必要になったらコメントを外す）
+    ##
+
+    # (1) DB に入っている画像をファイルに書き出し、nginx から返す。
+    #     アプリは認可だけ行い、レスポンスヘッダ X-Accel-Redirect: /internal-images/xxx.jpg を返す。
+    # location /internal-images/ {
+    #     internal;
+    #     alias /home/isucon/webapp/images/;
+    #     expires 1d;
+    # }
+
+    # (2) 内部 API を localhost と VPC 内に限定（isucon14 の /api/internal/ の例）。
+    # location /api/internal/ {
+    #     allow 127.0.0.1;
+    #     allow 192.168.0.0/24;
+    #     deny all;
+    #     include /etc/nginx/isucon/proxy_keepalive.conf;
+    #     proxy_pass http://app_light;
+    # }
+}

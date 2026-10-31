@@ -1,0 +1,106 @@
+---
+name: db-migrate
+description: <<問題名>> の DB に index やスキーマ変更を入れる（マイグレーション）。初期化（<<初期化の入口>>）で冪等に再現できる形で入れ、重いテーブルは事前に流し、EXPLAIN で効いたか確かめる。「index 貼って」「インデックス追加」「マイグレーション」「スキーマ変更」「カラム追加」「EXPLAIN 見て」などで使う。
+---
+
+# DB マイグレーション（<<問題名>> 専用）
+
+- この SKILL は prep の SKILL `db-migrate-setup` が <<調査日>> に作った。初期化の仕組みが変わったら作り直す
+- 手法の詳細と過去回の例: `.claude/skills/db-migrate-setup/reference.md`
+
+## 方針
+- 変更は初期化の処理に入れる（ベンチは毎回初期化を叩き、追試は再起動後にやり直すため）
+- 冪等に書く（初期化は何度も走るため。2 回目以降は即スキップさせて時間を守る）
+- 重いテーブルは、デプロイ前に同じ DDL を先に 1 回流す（初期化のタイムアウトに収めるため）
+- 効いたかは EXPLAIN と計測値で確かめる
+
+## この問題の実態（<<調査日>> 調査）
+| 項目 | 内容 |
+|---|---|
+| DB | <<エンジンとバージョン>>。<<IF NOT EXISTS の可否>> |
+| DB の場所 | ssh `<<DB サーバーの ssh 名>>`、DB 名 `<<DB 名>>` |
+| 初期化の入口 | <<初期化の入口>> |
+| 初期化の方式 | <<作り直し / 引き継ぎ / Go 内で SQL>>。根拠: <<根拠のファイルと行>> |
+| 初期化のタイムアウト | <<秒数>> 秒（出典: <<マニュアルの該当箇所>>）。目標はその半分 |
+| 書き方 | <<SQL ファイル型 / Go 型>>（下の「書き方」） |
+
+### テーブル（大きい順）
+<<inspect.sh の「テーブルの行数・サイズ」を表にする>>
+
+- 重いテーブル（目安 100MB 超、または 100 万行超）: <<テーブル名。無ければ「なし」>>
+
+### 既存 index
+<<inspect.sh の「既存 index」を表にする>>
+
+## スクリプト（`.claude/skills/db-migrate/idx.sh`）
+| コマンド | やること |
+|---|---|
+| `idx.sh show [table]` | index 一覧とテーブルの行数・サイズ |
+| `idx.sh explain "<SELECT ...>"` | EXPLAIN（SELECT だけ受け付ける） |
+| `idx.sh apply <table> <name> "<cols>"` | 無ければ `ALTER TABLE ADD INDEX`、所要秒を表示。あればスキップ（**人の OK を得てから使う**） |
+
+- 既定の接続先は上の表の DB。DB を別サーバーに移したら `ISU_DB_SSH` を変え、この SKILL の表も直す
+
+## 流れ（1 index = 1 ブランチ = 1 PR）
+1. 根拠を出す: SKILL newrelic-nrql で重い SQL を特定し、`idx.sh show` で今の index を見る
+2. `idx.sh explain "<その SQL>"` で `type: ALL`（全件スキャン）や `Using filesort` を確かめる
+3. 貼る index を決める
+   - WHERE の等価条件のカラム → ORDER BY のカラム、の順の複合 index にする
+   - index 名は `idx_<カラム>` にそろえる（冪等チェックは名前で見るため）
+4. コードの 5 点チェックを 1 行ずつ答える（CLAUDE.md）
+5. 下の「書き方」で初期化に足す
+6. <<ビルドと vet のコマンド>> を通す
+7. 重いテーブルは、デプロイ前に `idx.sh apply` で先に貼る（人の OK を待つ）
+8. SKILL <<デプロイ SKILL 名>> でデプロイ → <<初期化を叩くコマンド>> を 2 回続けて流し、2 回とも成功・タイムアウトの半分以内を確かめる
+9. `idx.sh show <table>` で付いたこと、`idx.sh explain` の `key` に使われたことを確かめる
+10. ベンチ → スコアと NewRelic の SQL 時間を見て採用 or revert
+
+## 書き方
+<!-- PATTERN:SQL ここから（初期化が SQL ファイルを流す問題。Go 型なら消す） -->
+- 初回だけ: `.claude/skills/db-migrate/80-add-index.sql` を <<SQL ディレクトリ>> にコピーし、末尾の例の `CALL` を消す
+- 初回だけ: <<init.sh などの実行順を決めている場所>> で、初期データ投入の後ろに 80-add-index.sql を流す（大量 INSERT は index が少ないほうが速いため）
+- index ごとに、80-add-index.sql の末尾へ `CALL isu_add_index(...)` を 1 行足す
+  ```sql
+  CALL isu_add_index('<table>', 'idx_<cols>', 'INDEX idx_<cols> (<col1>, <col2>)');
+  ```
+- 作り直し型の問題なら `CREATE TABLE` の中に `INDEX idx_x (a, b)` を書いてもよい（どちらか一方にする）
+<!-- PATTERN:SQL ここまで -->
+<!-- PATTERN:GO ここから（初期化が Go の中で SQL を流す問題。SQL ファイル型なら消す） -->
+- 初回だけ: <<初期化関数のファイルと関数名>> の後ろに `ensureIndex` を足す
+- index ごとに、初期化関数の末尾（DELETE などの後）へ `ensureIndex(...)` を 1 行足す
+```go
+	ensureIndex(ctx, "<table>", "idx_<cols>", "<col1>, <col2>")
+}
+
+// MySQL 8.0 は CREATE INDEX IF NOT EXISTS が無いので、information_schema で有無を見てから貼る
+func ensureIndex(ctx context.Context, table, name, cols string) {
+	var n int
+	if err := db.GetContext(ctx, &n, "SELECT COUNT(*) FROM information_schema.statistics WHERE table_schema = DATABASE() AND table_name = ? AND index_name = ?", table, name); err != nil {
+		log.Print(err)
+		return
+	}
+	if n > 0 {
+		return
+	}
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ADD INDEX %s (%s)", table, name, cols)); err != nil {
+		log.Print(err)
+	}
+}
+```
+- 失敗はログに出す（エラーを捨てる既存の SQL ループに `ALTER` を混ぜると、書き間違いに気づけないため）
+- <<db 変数名・ctx・import の差分。無ければ「そのまま貼れる（<<調査日>> に go vet 確認済み）」>>
+<!-- PATTERN:GO ここまで -->
+
+## 戻すとき
+- <<作り直し型: revert して初期化すれば戻る / 引き継ぎ型・Go 型: revert しても index は DB に残る>>
+- 消すなら `ALTER TABLE <table> DROP INDEX <name>`。**DROP は人の OK を待つ**
+- 残っていても害が少ない（書き込みが少し重くなる程度）なら、残したまま次へ進んでよい
+
+## カラム追加・型変更など index 以外
+- 考え方は同じ（冪等チェック → `ALTER TABLE`）。手法は `db-migrate-setup/reference.md` の 3〜4 章
+- ベンチが検証する値・レスポンスの形を変えないこと。埋め戻し（UPDATE）も初期化に入れ、時間を測る
+
+## やらないこと
+- サーバーで手で貼っただけで終わらせる（作り直した DB や追試で再現しないため）
+- `SET GLOBAL` など設定の変更（SKILL infra-tuning の担当）
+- 初期化に `DROP TABLE` を足す（データが戻らなくなる）
