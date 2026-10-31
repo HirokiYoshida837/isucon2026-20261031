@@ -113,6 +113,8 @@ func createPostHandler(h *HandlerContext) echo.HandlerFunc {
 		default:
 			return sql.ErrNoRows
 		}
+		// 投稿直後の画像の確認で本体を DB から引き直さないよう、書いた本体をキャッシュに入れる（中身は変わらない）
+		imageObjectCache.put(imageID, "image/jpeg", imageData)
 		user := res.User
 		if err := user.setImageKey(); err != nil {
 			return err
