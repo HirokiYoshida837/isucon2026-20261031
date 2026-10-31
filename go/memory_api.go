@@ -3,6 +3,7 @@ package isureal
 import (
 	"context"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -118,13 +119,36 @@ func loadMemoryInteractions(ctx context.Context, db sqlx.QueryerContext, items [
 		itemByPostID[items[i].ID] = &items[i]
 	}
 
-	query, args, err := sqlx.In(`AND r.post_id IN (?) ORDER BY r.created_at DESC, r.id DESC`, postIDs)
+	rQuery, rArgs, err := sqlx.In(`AND r.post_id IN (?) ORDER BY r.created_at DESC, r.id DESC`, postIDs)
 	if err != nil {
 		return err
 	}
-	reactions, err := selectCurrentRealMojis(ctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
+	cQuery, cArgs, err := sqlx.In(`AND c.post_id IN (?) ORDER BY c.created_at, c.id`, postIDs)
 	if err != nil {
 		return err
+	}
+	// realmojis と comments は独立なので並列に取る（往復 3→2）
+	var (
+		reactions  []RealMojiWithReactor
+		comments   []CommentWithAuthor
+		rErr, cErr error
+		wg         sync.WaitGroup
+	)
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		reactions, rErr = selectCurrentRealMojis(ctx, db, sqlx.Rebind(sqlx.DOLLAR, rQuery), rArgs...)
+	}()
+	go func() {
+		defer wg.Done()
+		comments, cErr = selectCommentsWithAuthor(ctx, db, sqlx.Rebind(sqlx.DOLLAR, cQuery), cArgs...)
+	}()
+	wg.Wait()
+	if rErr != nil {
+		return rErr
+	}
+	if cErr != nil {
+		return cErr
 	}
 	reactionReqs := make([]sigReq, 0, len(reactions)*2)
 	for _, reaction := range reactions {
@@ -138,14 +162,6 @@ func loadMemoryInteractions(ctx context.Context, db sqlx.QueryerContext, items [
 		}
 	}
 
-	query, args, err = sqlx.In(`AND c.post_id IN (?) ORDER BY c.created_at, c.id`, postIDs)
-	if err != nil {
-		return err
-	}
-	comments, err := selectCommentsWithAuthor(ctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
-	if err != nil {
-		return err
-	}
 	for _, comment := range comments {
 		item := itemByPostID[comment.PostID]
 		if len(item.Comments) < 50 {
