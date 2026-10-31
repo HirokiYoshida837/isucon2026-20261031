@@ -15,10 +15,10 @@
 | 10-31 03:06 | america1 | nginx-http keepalive_requests | 10000 | `rollback.sh -y 20261031-030642-nginx` |
 | 10-31 03:06 | asia1 / europe1 / america1 | journald（PR #50）`/etc/systemd/journald.conf.d/isucon.conf` | ForwardToSyslog=no、RateLimit 0、SystemMaxUse 1G | `sudo rm /etc/systemd/journald.conf.d/isucon.conf && sudo systemctl restart systemd-journald` |
 | 10-31 03:07 | 4 台 | `os-quiet.sh`（PR #52）+ `/etc/sysctl.d/91-isucon.conf` | apt/fwupd/motd/update-notifier の timer と unattended-upgrades 等を disable。tcp_max_syn_backlog 8192、netdev_max_backlog 8192、tcp_fin_timeout 10 | `os-quiet.sh --restore` |
+| 10-31 03:09 | asia1 / europe1 / america1 | nginx サイト設定 `apply-site.sh`（PR #49 + #55）+ `/etc/nginx/isucon/proxy_keepalive.conf` | upstream app keepalive 128、SSE（`/api/notifications`）の read/send timeout 1h・buffering off、画像 3 秒キャッシュ | `rollback.sh -y 20261031-030939-site`（asia1）/ `20261031-030942-site`（europe1）/ `20261031-030946-site`（america1） |
 
 ## 未適用
-- nginx サイト設定（PR #49 + #55: upstream keep-alive、SSE の timeout、画像 3 秒キャッシュ）。#55 マージ後に 3 台で `apply-site.sh ../nginx/sites-available/isureal.conf`
-  - 現状の 3 台は、チームメイトが直接当てた画像 3 秒キャッシュだけが入っている（`/etc/nginx/sites-available/isureal.conf`）
+- なし（C2 `tcp_tw_reuse=1` はベンチ後の TIME_WAIT を見て判断）
 
 ## 最終提出前（終了 -90 分）
 - asia2: `90-isucon.conf` の `log_min_duration_statement` を `-1` に戻す（スロークエリログを止める）
