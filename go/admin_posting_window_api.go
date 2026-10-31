@@ -64,7 +64,7 @@ func openPostingWindowHandler(h *HandlerContext) echo.HandlerFunc {
 		var window PostingWindow
 		if err := tx.GetContext(ctx, &window, `
    WITH notified AS (
-     INSERT INTO notifications (id, user_id, posting_window_id, created_at)
+     INSERT INTO window_notifications (id, user_id, posting_window_id, created_at)
      SELECT gen_random_uuid()::text, id, $2::varchar, $4::timestamptz FROM users WHERE region = $1 AND status = 'active'
    )
    INSERT INTO posting_windows (id, region, local_date, starts_at, on_time_deadline)
