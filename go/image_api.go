@@ -41,33 +41,27 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 
 		ctx := c.Request().Context()
-		// 持ち主の鍵・削除状態・本体を 1 往復で取る。削除状態は毎回確認する（即時反映）。
-		// 生存していないときは本体を転送しない。
+		// 持ち主の鍵と削除状態を毎回確認する（即時反映）。本体はここでは取らない。
 		var object struct {
 			SecretKeyHash string `db:"secret_key_hash"`
-			MediaType     string `db:"media_type"`
 			Alive         bool   `db:"alive"`
-			Data          []byte `db:"data"`
 		}
 		err = h.DB.GetContext(ctx, &object, `
-   SELECT x.secret_key_hash, x.media_type, x.alive, CASE WHEN x.alive THEN x.data END AS data
-   FROM (
-     SELECT u.secret_key_hash, i.media_type, i.data, (
-       COALESCE(u.profile_image_id = i.id, false)
-       OR EXISTS (
-         SELECT 1 FROM posts p
-         WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
-       )
-       OR EXISTS (
-         SELECT 1 FROM realmojis r
-         JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
-         JOIN users author ON author.id = p.author_id AND author.status = 'active'
-         WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
-       )
-     ) AS alive
-     FROM image_objects i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
-     WHERE i.id = $1
-   ) x
+   SELECT u.secret_key_hash, (
+     COALESCE(u.profile_image_id = i.id, false)
+     OR EXISTS (
+       SELECT 1 FROM posts p
+       WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
+     )
+     OR EXISTS (
+       SELECT 1 FROM realmojis r
+       JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
+       JOIN users author ON author.id = p.author_id AND author.status = 'active'
+       WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
+     )
+   ) AS alive
+   FROM image_objects i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
+   WHERE i.id = $1
   `, input.ImageID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
@@ -89,6 +83,18 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if exp <= time.Now().Unix() {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
-		return c.Blob(http.StatusOK, object.MediaType, object.Data)
+		entry, ok := imageObjectCache.get(input.ImageID)
+		if !ok {
+			entry = imageCacheEntry{id: input.ImageID}
+			err = h.DB.QueryRowxContext(ctx, `SELECT media_type, data FROM image_objects WHERE id = $1`, input.ImageID).Scan(&entry.mediaType, &entry.data)
+			if errors.Is(err, sql.ErrNoRows) {
+				return NewAPIError(http.StatusForbidden, "image_forbidden")
+			}
+			if err != nil {
+				return err
+			}
+			imageObjectCache.put(entry.id, entry.mediaType, entry.data)
+		}
+		return c.Blob(http.StatusOK, entry.mediaType, entry.data)
 	}
 }
