@@ -178,33 +178,17 @@ func getMyCurrentPostHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		userID := GetSession(c).UserID
-		var postID string
-		err := h.DB.GetContext(ctx, &postID, `
-   SELECT p.id FROM posts p
-   JOIN posting_windows w ON w.id = p.posting_window_id
-   JOIN users u ON u.id = p.author_id
-   JOIN posting_windows current ON current.region = u.region AND current.ended_at IS NULL
-                              AND current.local_date = w.local_date
-   WHERE p.author_id = $1 AND p.deleted_at IS NULL
+		posts, err := selectPostsWithAuthor(ctx, h.DB, `
+   AND p.author_id = $1
+   AND w.local_date = (SELECT current.local_date FROM posting_windows current WHERE current.region = u.region AND current.ended_at IS NULL)
   `, userID)
-		if errors.Is(err, sql.ErrNoRows) {
+		if err != nil {
+			return err
+		}
+		if len(posts) == 0 {
 			return NewAPIError(http.StatusNotFound, "post_not_found")
 		}
-		if err != nil {
-			return err
-		}
-		post, err := getPost(ctx, h.DB, postID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusNotFound, "post_not_found")
-		}
-		if err != nil {
-			return err
-		}
-		user, err := getUser(ctx, h.DB, userID)
-		if err != nil {
-			return err
-		}
-		return c.JSON(http.StatusOK, getMyCurrentPostResponse(newPostResponse(post, user)))
+		return c.JSON(http.StatusOK, getMyCurrentPostResponse(newPostResponse(posts[0].Post, posts[0].Author)))
 	}
 }
 
@@ -287,35 +271,20 @@ func updatePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if post.AuthorID != userID {
 			return NewAPIError(http.StatusForbidden, "post_not_editable")
 		}
-		window, err := getPostingWindow(ctx, tx, post.PostingWindowID)
-		if err != nil {
-			return err
-		}
-		if window.EndedAt != nil {
+		if post.WindowEndedAt != nil {
 			return NewAPIError(http.StatusForbidden, "post_not_editable")
 		}
-		if input.Caption != nil {
-			if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = $2 WHERE id = $1`, post.ID, *input.Caption); err != nil {
-				return err
-			}
-		}
-		if input.Visibility != nil {
-			if _, err := tx.ExecContext(ctx, `UPDATE posts SET visibility = $2 WHERE id = $1`, post.ID, *input.Visibility); err != nil {
-				return err
-			}
-		}
-		post, err = getPost(ctx, tx, post.ID)
-		if err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = COALESCE($2, caption), visibility = COALESCE($3, visibility) WHERE id = $1`, post.ID, input.Caption, input.Visibility); err != nil {
 			return err
 		}
-		user, err := getUser(ctx, tx, userID)
+		updated, err := getPostWithAuthor(ctx, tx, post.ID)
 		if err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		return c.JSON(http.StatusOK, updatePostResponse(newPostResponse(post, user)))
+		return c.JSON(http.StatusOK, updatePostResponse(newPostResponse(updated.Post, updated.Author)))
 	}
 }
 
@@ -350,15 +319,12 @@ func deletePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if post.AuthorID != userID {
 			return NewAPIError(http.StatusForbidden, "post_not_editable")
 		}
-		window, err := getPostingWindow(ctx, tx, post.PostingWindowID)
-		if err != nil {
-			return err
-		}
 		var deletions int
 		if err := tx.GetContext(ctx, &deletions, `
    SELECT count(*) FROM posts p JOIN posting_windows w ON w.id = p.posting_window_id
-   WHERE p.author_id = $1 AND w.local_date = $2 AND p.deleted_at IS NOT NULL
-  `, userID, window.LocalDate); err != nil {
+   WHERE p.author_id = $1 AND p.deleted_at IS NOT NULL
+     AND w.local_date = (SELECT local_date FROM posting_windows WHERE id = $2)
+  `, userID, post.PostingWindowID); err != nil {
 			return err
 		}
 		if deletions >= 2 {
