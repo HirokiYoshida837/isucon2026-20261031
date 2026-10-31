@@ -39,7 +39,7 @@ func openPostingWindowHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		// advisory lock → conflict 判定 → 前の期間の ended_at → window_notifications / posting_windows の INSERT → pg_notify を
-		// sql/93-open-posting-window-func.sql の関数で 1 往復にする（元は 7 往復）。pg_notify は commit 時に各 app へ届く
+		// sql/95-open-posting-window-func.sql の関数で 1 往復にする（元は 7 往復）。pg_notify は commit 時に各 app へ届く
 		id := uuid.NewString()
 		var out struct {
 			Code           int        `db:"code"`

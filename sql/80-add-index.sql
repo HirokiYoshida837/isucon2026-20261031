@@ -18,7 +18,6 @@ CREATE INDEX IF NOT EXISTS idx_follows_follower_id_updated_at_id ON follows (fol
 CREATE INDEX IF NOT EXISTS idx_realmojis_image_id_reactor_id ON realmojis (image_id, reactor_id) WHERE replaced_at IS NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_image_id_author_id ON posts (image_id, author_id) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_posts_author_id_posting_window_id ON posts (author_id, posting_window_id);
-CREATE INDEX IF NOT EXISTS idx_posts_author_id_posted_at_id ON posts (author_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_users_username_id ON users (username, id);
 CREATE INDEX IF NOT EXISTS idx_login_sessions_token_hash ON login_sessions (token_hash) WHERE active = true;
 CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions (user_id) WHERE active = true;
