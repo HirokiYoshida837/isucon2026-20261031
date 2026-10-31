@@ -41,8 +41,16 @@
 - リポジトリは private のまま。NewRelic は競技用アカウント（別組織の NewRelic MCP は使わない）
 
 ## 環境
-- サーバー: `~/.config/isucon/isucon.env` の `ISU_HOSTS`。IP はポータルのサーバリストを見る
+- サーバー: `~/.config/isucon/isucon.env` の `ISU_HOSTS`。IP は下の表を使い、食い違うときはポータルのサーバリストを優先する
 - 役割: asia1 nginx+app（asia）/ europe1 nginx+app（europe）/ america1 nginx+app（america）/ asia2 PostgreSQL（asia）/ ルーター（SSH 不可）
+
+| ポータル名 | 役割 | Public IP | Private IP | SSH |
+|---|---|---|---|---|
+| asia1 | App（c5.large） | 54.248.15.35 | 192.168.1.10 | `ssh isucon@54.248.15.35` |
+| europe1 | App（c7i.large） | 52.194.151.75 | 192.168.2.10 | `ssh isucon@52.194.151.75` |
+| america1 | App（c7i.large） | 54.248.249.30 | 192.168.3.10 | `ssh isucon@54.248.249.30` |
+| asia2 | DB（c5.large） | 54.248.122.216 | 192.168.4.10 | `ssh isucon@54.248.122.216` |
+
 - アプリは `isureal-go.service`（`EnvironmentFile=/home/isucon/env.sh`）。`env.sh` にリージョンと DB 接続情報がある
 - 初期化: `POST /api/initialize`。初期化で流す SQL: `sql/init.sh` → `sql/reset.sql`
 - ビルド: `cd go && make isureal`（go は `/home/isucon/local/go/bin`。非対話 ssh では PATH に足す）
