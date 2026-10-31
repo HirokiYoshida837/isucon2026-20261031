@@ -154,7 +154,7 @@ func getMyCurrentPostHandler(h *HandlerContext) echo.HandlerFunc {
 		userID := GetSession(c).UserID
 		posts, err := selectPostsWithAuthor(ctx, h.DB, `
    AND p.author_id = $1
-   AND w.local_date = (SELECT current.local_date FROM posting_windows current WHERE current.region = u.region AND current.ended_at IS NULL)
+   AND p.local_date = (SELECT current.local_date FROM posting_windows current WHERE current.region = u.region AND current.ended_at IS NULL)
   `, userID)
 		if err != nil {
 			return err
@@ -296,8 +296,8 @@ func deletePostHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		err = tx.GetContext(ctx, &post, `
    SELECT `+postColumns+`, (
-     SELECT count(*) FROM posts dp JOIN posting_windows dw ON dw.id = dp.posting_window_id
-     WHERE dp.author_id = $2 AND dp.deleted_at IS NOT NULL AND dw.local_date = w.local_date
+     SELECT count(*) FROM posts dp
+     WHERE dp.author_id = $2 AND dp.deleted_at IS NOT NULL AND dp.local_date = p.local_date
    ) AS deletions
    FROM posts p JOIN posting_windows w ON w.id = p.posting_window_id
    WHERE p.id = $1 AND p.deleted_at IS NULL

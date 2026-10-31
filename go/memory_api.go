@@ -77,7 +77,7 @@ func listMemories(ctx context.Context, db sqlx.QueryerContext, userID string, st
 		return response, NewAPIError(http.StatusBadRequest, "invalid_pagination")
 	}
 	posts, err := selectPostsWithAuthor(ctx, db, `
-  AND p.author_id = $1 AND w.local_date >= $2 AND w.local_date < $3
+  AND p.author_id = $1 AND p.local_date >= $2 AND p.local_date < $3
   AND ($4::timestamptz IS NULL OR (p.posted_at, p.id) < ($4, $5))
   ORDER BY p.posted_at DESC, p.id DESC LIMIT 51
  `, userID, start, end, beforeAt, beforeID)
