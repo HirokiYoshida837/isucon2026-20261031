@@ -38,51 +38,23 @@ func openPostingWindowHandler(h *HandlerContext) echo.HandlerFunc {
 			seconds = *input.OnTimeSeconds
 		}
 		ctx := c.Request().Context()
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
+		// advisory lock → conflict 判定 → 前の期間の ended_at → window_notifications / posting_windows の INSERT → pg_notify を
+		// sql/95-open-posting-window-func.sql の関数で 1 往復にする（元は 7 往復）。pg_notify は commit 時に各 app へ届く
+		id := uuid.NewString()
+		var out struct {
+			Code           int        `db:"code"`
+			StartsAt       *time.Time `db:"starts_at"`
+			OnTimeDeadline *time.Time `db:"on_time_deadline"`
+		}
+		if err := h.DB.GetContext(ctx, &out, `SELECT o_code AS code, o_starts_at AS starts_at, o_on_time_deadline AS on_time_deadline FROM open_posting_window($1, $2, $3, $4)`, region, localDate, id, seconds); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		// users のテーブルロックは外す（全書き込みを止めていた）。同じリージョンの同時オープンだけ advisory lock で直列にする
-		if _, err := tx.ExecContext(ctx, `SELECT pg_advisory_xact_lock(hashtext('posting_window_open:' || $1::text))`, region); err != nil {
-			return err
-		}
-		var state struct {
-			Conflict bool      `db:"conflict"`
-			StartsAt time.Time `db:"starts_at"`
-		}
-		if err := tx.GetContext(ctx, &state, `SELECT EXISTS(SELECT 1 FROM posting_windows WHERE region = $1 AND local_date >= $2) AS conflict, clock_timestamp() AS starts_at`, region, localDate); err != nil {
-			return err
-		}
-		if state.Conflict {
+		if out.Code == 409 {
 			return NewAPIError(http.StatusConflict, "posting_window_conflict")
 		}
-		startsAt := state.StartsAt
-		if _, err := tx.ExecContext(ctx, `UPDATE posting_windows SET ended_at = $2 WHERE region = $1 AND ended_at IS NULL`, region, startsAt); err != nil {
-			return err
-		}
-		var window PostingWindow
-		if err := tx.GetContext(ctx, &window, `
-   WITH notified AS (
-     INSERT INTO window_notifications (id, user_id, posting_window_id, created_at)
-     SELECT gen_random_uuid()::text, id, $2::varchar, $4::timestamptz FROM users WHERE region = $1 AND status = 'active'
-   )
-   INSERT INTO posting_windows (id, region, local_date, starts_at, on_time_deadline)
-   VALUES ($2, $1, $3, $4, $5)
-   RETURNING id, region, local_date, starts_at, on_time_deadline, ended_at
-  `, region, uuid.NewString(), localDate, startsAt, startsAt.Add(time.Duration(seconds)*time.Second)); err != nil {
-			return err
-		}
-		// commit 時に各 app へ届く（LISTEN している NotificationHub が即ポーリングする）
-		if _, err := tx.ExecContext(ctx, `SELECT pg_notify($1, $2)`, postingWindowChannel, region); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
 		return c.JSON(http.StatusCreated, openPostingWindowResponse{
-			ID: window.ID, Region: window.Region, LocalDate: window.LocalDate.Format(time.DateOnly),
-			StartsAt: window.StartsAt, OnTimeDeadline: window.OnTimeDeadline,
+			ID: id, Region: region, LocalDate: localDate.Format(time.DateOnly),
+			StartsAt: *out.StartsAt, OnTimeDeadline: *out.OnTimeDeadline,
 		})
 	}
 }
