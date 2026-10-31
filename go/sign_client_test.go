@@ -42,8 +42,9 @@ func TestPrewarmSigsFillsCache(t *testing.T) {
 
 func TestPrewarmSigsFallsBackWhenPeerDown(t *testing.T) {
 	oldPeers := signPeers
-	signPeers = []string{"127.0.0.1:1"} // 誰も待ち受けていない
-	defer func() { signPeers = oldPeers; signPausedUntil.Store(0); signFails.Store(0) }()
+	oldPct := signLocalPercent
+	signPeers, signLocalPercent = []string{"127.0.0.1:1"}, 0 // 誰も待ち受けていない。自前の割合は 0 にして peer の失敗だけを見る
+	defer func() { signPeers, signLocalPercent = oldPeers, oldPct; signPausedUntil.Store(0); signFails.Store(0) }()
 	issuedImageURLs.reset()
 	key := bytes.Repeat([]byte{9}, 32)
 	reqs := make([]sigReq, 0, 10)
