@@ -22,26 +22,31 @@ func imageSigningKey(secretKeyHash string) ([]byte, error) {
 	return key, nil
 }
 
+// HMAC を 1 つ作って Reset で使い回す（鍵のパディング計算と確保を 1000 回繰り返さない）。出力は毎回作る実装と同じ。
 func imageSignature(key []byte, imageID string, exp int64) []byte {
 	value := []byte(strconv.FormatInt(exp, 10) + ":" + imageID)
+	mac := hmac.New(sha256.New, key)
 	for range imageSignatureIterations {
-		mac := hmac.New(sha256.New, key)
+		mac.Reset()
 		mac.Write(value)
-		value = mac.Sum(nil)
+		value = mac.Sum(value[:0])
 	}
 	return value
 }
 
+// 発行した URL は signedURLReuse の間そのまま返す（期限が最大その分だけ短くなる）。
+const signedURLReuse = 5 * time.Minute
+
 func signedImageURL(user User, imageID string) string {
-	// exp は分単位に切り下げる（期限が最大 60 秒短くなるだけ）。同じ分の中では同じ URL を返せる。
-	exp := time.Now().Add(imageURLLifetime).Truncate(time.Minute).Unix()
+	now := time.Now()
 	cacheable := len(user.ImageKey) == sha256.Size
-	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID, exp: exp}
+	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID}
 	if cacheable {
-		if u, ok := issuedImageURLs.get(cacheKey); ok {
-			return u
+		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= now.Add(imageURLLifetime-signedURLReuse).Unix() {
+			return e.url
 		}
 	}
+	exp := now.Add(imageURLLifetime).Unix()
 	sig := imageSignature(user.ImageKey, imageID, exp)
 	query := url.Values{
 		"exp": {strconv.FormatInt(exp, 10)},
@@ -49,7 +54,7 @@ func signedImageURL(user User, imageID string) string {
 	}
 	u := "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
 	if cacheable {
-		issuedImageURLs.put(cacheKey, u)
+		issuedImageURLs.put(cacheKey, signedURLEntry{url: u, exp: exp})
 		// 自分が発行した署名は検証済みとして登録する（呼び出し元は画像の持ち主の鍵で署名している）。
 		verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
 	}

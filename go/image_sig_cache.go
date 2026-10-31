@@ -48,41 +48,45 @@ func (c *verifiedSigCache) reset() {
 	c.items = map[verifiedSigKey]struct{}{}
 }
 
-// 発行した署名付き URL のキャッシュ。exp を分単位に切り下げているので、同じ分の中では同じ URL になる。
-// 分が変わると古い entry は引かれなくなるので、上限を超えたら全消去する。
+// 発行した署名付き URL のキャッシュ。(鍵, image_id) ごとに最後に発行した URL と exp を持ち、signedURLReuse の間は使い回す。
+// 上限を超えたら全消去する。
 const signedURLMaxEntries = 200000
 
 type signedURLKey struct {
 	key     string
 	imageID string
-	exp     int64
+}
+
+type signedURLEntry struct {
+	url string
+	exp int64
 }
 
 type signedURLCache struct {
 	mu    sync.Mutex
-	items map[signedURLKey]string
+	items map[signedURLKey]signedURLEntry
 }
 
-var issuedImageURLs = &signedURLCache{items: map[signedURLKey]string{}}
+var issuedImageURLs = &signedURLCache{items: map[signedURLKey]signedURLEntry{}}
 
-func (c *signedURLCache) get(k signedURLKey) (string, bool) {
+func (c *signedURLCache) get(k signedURLKey) (signedURLEntry, bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	u, ok := c.items[k]
-	return u, ok
+	e, ok := c.items[k]
+	return e, ok
 }
 
-func (c *signedURLCache) put(k signedURLKey, u string) {
+func (c *signedURLCache) put(k signedURLKey, e signedURLEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if len(c.items) >= signedURLMaxEntries {
-		c.items = map[signedURLKey]string{}
+		c.items = map[signedURLKey]signedURLEntry{}
 	}
-	c.items[k] = u
+	c.items[k] = e
 }
 
 func (c *signedURLCache) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.items = map[signedURLKey]string{}
+	c.items = map[signedURLKey]signedURLEntry{}
 }
