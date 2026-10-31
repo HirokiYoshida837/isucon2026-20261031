@@ -7,17 +7,22 @@ set -uo pipefail
 OUT="${1:?保存先ディレクトリを指定して}"
 PKG="example.com/isureal-company/isureal."
 command -v go >/dev/null || { echo "(go が無いので pprof を集計できない)"; exit 0; }
+# PPROF_LOCAL=1 なら回収せず、保存先にある cpu-<host>.prof から要約だけ出す（再投稿用）
 for h in $ISU_PPROF_HOSTS; do
-  # 取得が終わるのを少し待つ（ベンチ完了直後に呼ばれると profile がまだ走っていることがある）
-  for _ in $(seq 1 30); do ssh "${SSH_OPTS[@]}" "$h" "test -f /tmp/isu-pprof/done" 2>/dev/null && break; sleep 2; done
-  ssh "${SSH_OPTS[@]}" "$h" "cat /tmp/isu-pprof/log 2>/dev/null" > "$OUT/pprof-$h.txt" 2>/dev/null
-  if ! scp -q "${SSH_OPTS[@]}" "$h:/tmp/isu-pprof/cpu.prof" "$OUT/cpu-$h.prof" 2>/dev/null || [ ! -s "$OUT/cpu-$h.prof" ]; then
-    echo "$h: プロファイルなし（$(tail -1 "$OUT/pprof-$h.txt" 2>/dev/null)）"; rm -f "$OUT/cpu-$h.prof"; continue
+  if [ -z "${PPROF_LOCAL:-}" ]; then
+    # 取得が終わるのを少し待つ（ベンチ完了直後に呼ばれると profile がまだ走っていることがある）
+    for _ in $(seq 1 30); do ssh "${SSH_OPTS[@]}" "$h" "test -f /tmp/isu-pprof/done" 2>/dev/null && break; sleep 2; done
+    ssh "${SSH_OPTS[@]}" "$h" "cat /tmp/isu-pprof/log 2>/dev/null" > "$OUT/pprof-$h.txt" 2>/dev/null
+    if ! scp -q "${SSH_OPTS[@]}" "$h:/tmp/isu-pprof/cpu.prof" "$OUT/cpu-$h.prof" 2>/dev/null || [ ! -s "$OUT/cpu-$h.prof" ]; then
+      echo "$h: プロファイルなし（$(tail -1 "$OUT/pprof-$h.txt" 2>/dev/null)）"; rm -f "$OUT/cpu-$h.prof" "$OUT/pprof-$h.txt"; continue
+    fi
+    scp -q "${SSH_OPTS[@]}" "$h:/tmp/isu-pprof/heap.prof" "$OUT/heap-$h.prof" 2>/dev/null
+  elif [ ! -s "$OUT/cpu-$h.prof" ]; then
+    echo "$h: プロファイルなし"; continue
   fi
-  scp -q "${SSH_OPTS[@]}" "$h:/tmp/isu-pprof/heap.prof" "$OUT/heap-$h.prof" 2>/dev/null
   FLAT=$(go tool pprof -top -nodecount=40 "$OUT/cpu-$h.prof" 2>/dev/null)
   CUM=$(go tool pprof -top -cum -nodecount=400 "$OUT/cpu-$h.prof" 2>/dev/null)
-  {
+  [ -n "${PPROF_LOCAL:-}" ] || {
     echo "== $h: flat 上位（CPU を直接使った関数）"; echo "$FLAT"
     echo; echo "== $h: cum 上位（呼び出し先を含む）"; echo "$CUM" | head -60
     echo; echo "== $h: cum 上位（アプリの関数だけ）"; echo "$CUM" | grep "$PKG" | grep -v Middleware | head -40
