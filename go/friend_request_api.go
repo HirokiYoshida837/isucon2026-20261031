@@ -28,49 +28,25 @@ func createFriendRequestHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.RecipientID)
-		if err != nil {
+		if actor == input.RecipientID || input.RecipientID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		var res struct {
+			Code    int        `db:"code"`
+			ID      *string    `db:"rid"`
+			Status  *string    `db:"rstatus"`
+			Updated *time.Time `db:"rupdated"`
+		}
+		if err := h.DB.GetContext(ctx, &res, `SELECT * FROM create_friend_request($1, $2, $3, $4)`, actor, input.RecipientID, uuid.NewString(), uuid.NewString()); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var state struct {
-			Blocked            bool    `db:"blocked"`
-			Friends            bool    `db:"friends"`
-			PendingID          *string `db:"pending_id"`
-			PendingRequesterID *string `db:"pending_requester_id"`
-			PendingRecipientID *string `db:"pending_recipient_id"`
-		}
-		if err := tx.GetContext(ctx, &state, `
-   SELECT
-    EXISTS(SELECT 1 FROM block_relations WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1)) AS blocked,
-    EXISTS(SELECT 1 FROM friendships WHERE (user_low_id=$1 AND user_high_id=$2) OR (user_low_id=$2 AND user_high_id=$1)) AS friends,
-    pending.id AS pending_id, pending.requester_id AS pending_requester_id, pending.recipient_id AS pending_recipient_id
-   FROM (SELECT 1) one LEFT JOIN LATERAL (
-    SELECT id, requester_id, recipient_id FROM friend_requests WHERE status='pending' AND
-     ((requester_id=$1 AND recipient_id=$2) OR (requester_id=$2 AND recipient_id=$1))
-    LIMIT 1
-   ) pending ON true
-  `, actor, input.RecipientID); err != nil {
-			return err
-		}
-		if state.Blocked || state.Friends {
+		switch res.Code {
+		case 404:
+			return NewAPIError(http.StatusNotFound, "relationship_not_found")
+		case 409:
 			return NewAPIError(http.StatusConflict, "relationship_conflict")
 		}
-		var request FriendRequest
-		if state.PendingID != nil {
-			if *state.PendingRequesterID == actor {
-				return NewAPIError(http.StatusConflict, "relationship_conflict")
-			}
-			request, err = acceptFriendRequest(ctx, tx, FriendRequest{ID: *state.PendingID, RequesterID: *state.PendingRequesterID, RecipientID: *state.PendingRecipientID})
-		} else {
-			err = tx.GetContext(ctx, &request, `INSERT INTO friend_requests (id, requester_id, recipient_id, status, created_at, updated_at) VALUES ($1,$2,$3,'pending',clock_timestamp(),clock_timestamp()) RETURNING `+friendRequestColumns, uuid.NewString(), actor, input.RecipientID)
-		}
-		if err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
-		}
+		request := FriendRequest{ID: *res.ID, Status: *res.Status, UpdatedAt: *res.Updated}
 		return c.JSON(http.StatusCreated, createFriendRequestResponse{RelationID: request.ID, Status: request.Status, UpdatedAt: request.UpdatedAt})
 	}
 }

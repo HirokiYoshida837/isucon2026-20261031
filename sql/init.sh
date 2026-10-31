@@ -23,4 +23,5 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--set=ON_ERROR_STOP=1 \
 	--file=reset.sql \
 	--file=80-add-index.sql \
-	--file=81-follow-func.sql
+	--file=81-follow-func.sql \
+	--file=82-friend-request-func.sql
