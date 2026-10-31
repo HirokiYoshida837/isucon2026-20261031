@@ -137,6 +137,8 @@ func createPostHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.GetContext(ctx, &post, `
    WITH image AS (
      INSERT INTO image_objects (id, owner_user_id, data, media_type, created_at) VALUES ($4, $2, $12, 'image/jpeg', $11)
+   ), image_key AS (
+     INSERT INTO image_keys (id, created_at, owner_user_id) VALUES ($4, $11, $2)
    )
    INSERT INTO posts (id, author_id, posting_window_id, image_id, caption, visibility,
                       location_kind, latitude, longitude, locality, posted_at)

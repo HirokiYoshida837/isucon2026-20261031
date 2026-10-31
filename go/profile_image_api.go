@@ -35,9 +35,11 @@ func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 		var n int
 		if err := h.DB.GetContext(ctx, &n, `
 WITH old AS (SELECT profile_image_id FROM users WHERE id=$1 FOR NO KEY UPDATE),
-ins AS (INSERT INTO image_objects(id,owner_user_id,data,media_type) SELECT $2,$1,$3,'image/jpeg' FROM old),
+ins AS (INSERT INTO image_objects(id,owner_user_id,data,media_type) SELECT $2,$1,$3,'image/jpeg' FROM old RETURNING id,created_at,owner_user_id),
+ins_key AS (INSERT INTO image_keys(id,created_at,owner_user_id) SELECT id,created_at,owner_user_id FROM ins),
 upd AS (UPDATE users SET profile_image_id=$2,updated_at=clock_timestamp() WHERE id=$1),
-del AS (DELETE FROM image_objects WHERE id=(SELECT profile_image_id FROM old))
+del AS (DELETE FROM image_objects WHERE id=(SELECT profile_image_id FROM old)),
+del_key AS (DELETE FROM image_keys WHERE id=(SELECT profile_image_id FROM old))
 SELECT count(*) FROM old`, userID, uuid.NewString(), data); err != nil {
 			return err
 		}
@@ -56,7 +58,8 @@ func deleteProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := h.DB.GetContext(ctx, &n, `
 WITH old AS (SELECT profile_image_id FROM users WHERE id=$1 AND profile_image_id IS NOT NULL FOR NO KEY UPDATE),
 upd AS (UPDATE users SET profile_image_id=NULL,updated_at=clock_timestamp() WHERE id=$1 AND EXISTS(SELECT 1 FROM old)),
-del AS (DELETE FROM image_objects WHERE id=(SELECT profile_image_id FROM old))
+del AS (DELETE FROM image_objects WHERE id=(SELECT profile_image_id FROM old)),
+del_key AS (DELETE FROM image_keys WHERE id=(SELECT profile_image_id FROM old))
 SELECT count(*) FROM old`, userID); err != nil {
 			return err
 		}

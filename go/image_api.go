@@ -42,9 +42,11 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 
 		ctx := c.Request().Context()
 		// 持ち主の鍵と削除状態を毎回確認する（即時反映）。本体はここでは取らない。
+		// image_objects は id だけだと全パーティションを見るので、対応表 image_keys から引く（#121）
 		var object struct {
-			SecretKeyHash string `db:"secret_key_hash"`
-			Alive         bool   `db:"alive"`
+			SecretKeyHash string    `db:"secret_key_hash"`
+			Alive         bool      `db:"alive"`
+			CreatedAt     time.Time `db:"created_at"`
 		}
 		err = h.DB.GetContext(ctx, &object, `
    SELECT u.secret_key_hash, (
@@ -59,8 +61,8 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
        JOIN users author ON author.id = p.author_id AND author.status = 'active'
        WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
      )
-   ) AS alive
-   FROM image_objects i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
+   ) AS alive, i.created_at
+   FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
    WHERE i.id = $1
   `, input.ImageID)
 		if errors.Is(err, sql.ErrNoRows) {
@@ -90,7 +92,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		entry, ok := imageObjectCache.get(input.ImageID)
 		if !ok {
 			entry = imageCacheEntry{id: input.ImageID}
-			err = h.DB.QueryRowxContext(ctx, `SELECT media_type, data FROM image_objects WHERE id = $1`, input.ImageID).Scan(&entry.mediaType, &entry.data)
+			err = h.DB.QueryRowxContext(ctx, `SELECT media_type, data FROM image_objects WHERE id = $1 AND created_at = $2`, input.ImageID, object.CreatedAt).Scan(&entry.mediaType, &entry.data)
 			if errors.Is(err, sql.ErrNoRows) {
 				return NewAPIError(http.StatusForbidden, "image_forbidden")
 			}

@@ -21,6 +21,7 @@ BEGIN
   END LOOP;
 END $$;
 DELETE FROM image_objects WHERE created_at > (SELECT created_at FROM initial_data_boundary);
+-- image_keys（84-image-keys.sql で作る）の境界より後は 84-image-keys.sql が消す
 DELETE FROM users WHERE created_at > (SELECT created_at FROM initial_data_boundary);
 
 UPDATE users u
