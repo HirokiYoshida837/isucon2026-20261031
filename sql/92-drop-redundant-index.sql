@@ -5,3 +5,6 @@
 --   (follower_id, followee_id) の等値は UNIQUE follows_follower_id_followee_id_key で引ける。
 DROP INDEX IF EXISTS posts_author_id;
 DROP INDEX IF EXISTS idx_follows_followee_id_follower_id;
+-- idx_posts_author_id_posted_at_id（80-add-index.sql から外した、134MB）: ベンチ 1 回で idx_scan 0（#255）。
+--   memories は local_date で絞るので idx_posts_author_id_local_date_posted_at_id を使い、export もそちらの Index Only Scan とソートで足りる。
+DROP INDEX IF EXISTS idx_posts_author_id_posted_at_id;
