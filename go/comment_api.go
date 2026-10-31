@@ -63,22 +63,24 @@ func createCommentHandler(h *HandlerContext) echo.HandlerFunc {
 		if !allowed {
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
-		id := uuid.NewString()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO comments(id,post_id,author_id,body,created_at) VALUES($1,$2,$3,$4,clock_timestamp())`, id, post.ID, actor, input.Body); err != nil {
+		var comment CommentWithAuthor
+		if err := tx.GetContext(ctx, &comment, `
+   WITH c AS (
+     INSERT INTO comments(id,post_id,author_id,body,created_at) VALUES($1,$2,$3,$4,clock_timestamp())
+     RETURNING id,post_id,author_id,body,created_at,deleted_at
+   )
+   SELECT c.id,c.post_id,c.author_id,c.body,c.created_at,c.deleted_at, `+userColumnsAs("u", "author")+`
+   FROM c JOIN users u ON u.id = c.author_id AND u.status = 'active'
+  `, uuid.NewString(), post.ID, actor, input.Body); err != nil {
 			return err
 		}
-		comment, err := getComment(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		user, err := getUser(ctx, tx, actor)
-		if err != nil {
+		if err := comment.Author.setImageKey(); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		return c.JSON(http.StatusCreated, newCommentResponse(comment, user))
+		return c.JSON(http.StatusCreated, newCommentResponse(comment.Comment, comment.Author))
 	}
 }
 

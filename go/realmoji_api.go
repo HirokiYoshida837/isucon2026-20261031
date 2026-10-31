@@ -90,26 +90,26 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		if _, err := tx.ExecContext(ctx, `UPDATE realmojis SET replaced_at=clock_timestamp() WHERE post_id=$1 AND reactor_id=$2 AND replaced_at IS NULL AND deleted_at IS NULL`, post.ID, actor); err != nil {
 			return err
 		}
-		imageID := uuid.NewString()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO image_objects(id,owner_user_id,data,media_type) VALUES($1,$2,$3,'image/jpeg')`, imageID, actor, data); err != nil {
+		var reaction RealMojiWithReactor
+		if err := tx.GetContext(ctx, &reaction, `
+   WITH image AS (
+     INSERT INTO image_objects(id,owner_user_id,data,media_type) VALUES($4,$3,$6,'image/jpeg')
+   ), r AS (
+     INSERT INTO realmojis(id,post_id,reactor_id,image_id,reaction_type,created_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())
+     RETURNING id,post_id,reactor_id,image_id,reaction_type,created_at,replaced_at,deleted_at
+   )
+   SELECT r.id,r.post_id,r.reactor_id,r.image_id,r.reaction_type,r.created_at,r.replaced_at,r.deleted_at, `+userColumnsAs("u", "reactor")+`
+   FROM r JOIN users u ON u.id = r.reactor_id AND u.status = 'active'
+  `, uuid.NewString(), post.ID, actor, uuid.NewString(), input.ReactionType, data); err != nil {
 			return err
 		}
-		id := uuid.NewString()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO realmojis(id,post_id,reactor_id,image_id,reaction_type,created_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())`, id, post.ID, actor, imageID, input.ReactionType); err != nil {
-			return err
-		}
-		reaction, err := getRealMoji(ctx, tx, id)
-		if err != nil {
-			return err
-		}
-		user, err := getUser(ctx, tx, actor)
-		if err != nil {
+		if err := reaction.Reactor.setImageKey(); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		return c.JSON(http.StatusCreated, newRealMojiResponse(reaction, user))
+		return c.JSON(http.StatusCreated, newRealMojiResponse(reaction.RealMoji, reaction.Reactor))
 	}
 }
 

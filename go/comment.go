@@ -18,12 +18,6 @@ type Comment struct {
 	DeletedAt *time.Time `db:"deleted_at"`
 }
 
-func getComment(ctx context.Context, db sqlx.QueryerContext, id string) (Comment, error) {
-	var comment Comment
-	err := sqlx.GetContext(ctx, db, &comment, `SELECT id,post_id,author_id,body,created_at,deleted_at FROM comments WHERE id=$1`, id)
-	return comment, err
-}
-
 type CommentWithAuthor struct {
 	Comment
 	Author User `db:"author"`
