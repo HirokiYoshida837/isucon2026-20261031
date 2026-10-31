@@ -169,34 +169,22 @@ func deleteRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
+		// 単一文の原子的 UPDATE。0 行のときだけ 404 / 403 を判定する。
+		result, err := h.DB.ExecContext(ctx, `UPDATE realmojis r SET deleted_at=clock_timestamp() FROM posts p WHERE r.id=$1 AND r.deleted_at IS NULL AND p.id=r.post_id AND ($2=r.reactor_id OR $2=p.author_id)`, input.RealMojiID, actor)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var lockedID string
-		if err := tx.GetContext(ctx, &lockedID, `SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE`, actor); err != nil {
+		if n, err := result.RowsAffected(); err != nil {
 			return err
-		}
-		var record struct {
-			ReactorID string `db:"reactor_id"`
-			AuthorID  string `db:"author_id"`
-		}
-		err = tx.GetContext(ctx, &record, `SELECT r.reactor_id,p.author_id FROM realmojis r JOIN posts p ON p.id=r.post_id WHERE r.id=$1 AND r.deleted_at IS NULL FOR UPDATE OF r`, input.RealMojiID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusNotFound, "interaction_not_found")
-		}
-		if err != nil {
-			return err
-		}
-		if actor != record.ReactorID && actor != record.AuthorID {
+		} else if n == 0 {
+			var exists bool
+			if err := h.DB.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM realmojis r JOIN posts p ON p.id=r.post_id WHERE r.id=$1 AND r.deleted_at IS NULL)`, input.RealMojiID); err != nil {
+				return err
+			}
+			if !exists {
+				return NewAPIError(http.StatusNotFound, "interaction_not_found")
+			}
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE realmojis SET deleted_at=clock_timestamp() WHERE id=$1`, input.RealMojiID); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 		return c.NoContent(http.StatusNoContent)
 	}

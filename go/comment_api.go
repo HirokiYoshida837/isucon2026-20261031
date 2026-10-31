@@ -140,34 +140,22 @@ func deleteCommentHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
+		// 単一文の原子的 UPDATE。0 行のときだけ 404 / 403 を判定する。
+		result, err := h.DB.ExecContext(ctx, `UPDATE comments c SET deleted_at=clock_timestamp() FROM posts p WHERE c.id=$1 AND c.deleted_at IS NULL AND p.id=c.post_id AND ($2=c.author_id OR $2=p.author_id)`, input.CommentID, actor)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var lockedID string
-		if err := tx.GetContext(ctx, &lockedID, `SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE`, actor); err != nil {
+		if n, err := result.RowsAffected(); err != nil {
 			return err
-		}
-		var record struct {
-			AuthorID     string `db:"author_id"`
-			PostAuthorID string `db:"post_author_id"`
-		}
-		err = tx.GetContext(ctx, &record, `SELECT c.author_id,p.author_id AS post_author_id FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=$1 AND c.deleted_at IS NULL FOR UPDATE OF c`, input.CommentID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusNotFound, "interaction_not_found")
-		}
-		if err != nil {
-			return err
-		}
-		if actor != record.AuthorID && actor != record.PostAuthorID {
+		} else if n == 0 {
+			var exists bool
+			if err := h.DB.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM comments c JOIN posts p ON p.id=c.post_id WHERE c.id=$1 AND c.deleted_at IS NULL)`, input.CommentID); err != nil {
+				return err
+			}
+			if !exists {
+				return NewAPIError(http.StatusNotFound, "interaction_not_found")
+			}
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE comments SET deleted_at=clock_timestamp() WHERE id=$1`, input.CommentID); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
