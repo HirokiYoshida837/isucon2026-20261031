@@ -71,6 +71,6 @@ func buildSignedURL(imageID string, exp int64, sig []byte) string {
 func storeIssued(key []byte, imageID string, exp int64, sig []byte) string {
 	u := buildSignedURL(imageID, exp, sig)
 	issuedImageURLs.put(signedURLKey{key: string(key), imageID: imageID}, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load()})
-	verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
+	verifiedImageSigs.add(imageID, exp, sig)
 	return u
 }

@@ -62,7 +62,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
 		entry, cached := imageObjectCache.get(input.ImageID)
-		withData := !cached && verifiedImageSigs.has(sigKey)
+		withData := !cached && knownSigMatches(input.ImageID, exp, sig)
 		type imageRow struct {
 			SecretKeyHash string    `db:"secret_key_hash"`
 			Alive         bool      `db:"alive"`
@@ -99,7 +99,15 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		object := v.(*imageRow)
-		if !verifiedImageSigs.has(sigKey) && !pushedSigMatches(input.ImageID, exp, sig) {
+		known, hasKnown := verifiedImageSigs.get(input.ImageID, exp)
+		if !(hasKnown && hmac.Equal(sig, known[:])) && !pushedSigMatches(input.ImageID, exp, sig) {
+			// 正しい署名を知っていて違うなら、HMAC を計算しなくても不正と分かる（#270）。
+			// DB の問い合わせは省かない（画像や持ち主が無いときは今までどおり abuse を付けずに上で 403 になる）
+			if hasKnown {
+				rejectedImageSigs.add(sigKey)
+				c.Set("abuse", "invalid_signature")
+				return NewAPIError(http.StatusForbidden, "image_forbidden")
+			}
 			key, err := imageSigningKey(object.SecretKeyHash)
 			if err != nil {
 				return err
@@ -109,7 +117,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 				c.Set("abuse", "invalid_signature")
 				return NewAPIError(http.StatusForbidden, "image_forbidden")
 			}
-			verifiedImageSigs.add(sigKey)
+			verifiedImageSigs.add(input.ImageID, exp, sig)
 		}
 		if !object.Alive {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
