@@ -24,6 +24,7 @@
 | 10-31 07:45 | asia2 | PostgreSQL `conf.d/99-wal.conf`（#234 / PR #254。reload 済み） | `wal_writer_delay 10ms`・`wal_writer_flush_after 8MB` は反映済み。`wal_buffers 128MB` は **pending_restart**（再起動試験の reboot で効く） | `sudo rm /etc/postgresql/16/main/conf.d/99-wal.conf && sudo systemctl restart postgresql` |
 | 10-31 07:52 | asia1 | `env.sh` に `ISUREAL_IMAGE_CACHE_MB=512`（#260 の意図。RSS が 2.7GB まで伸びていた）+ isureal-go restart（loglevel.conf もこの restart で有効化） | 起動直後 RSS 44MB、`GET /` 200、journald 10 秒で 0 行 | `env.sh.bak-20261031-imgcache` に戻して restart（env.sh の中身は表示しない） |
 | 10-31 08:10 | asia2 | PostgreSQL `conf.d/99-zz-pss-off.conf`（reload 済み。`99-isucon-tuning.conf` の `track = all` より後に読ませるため名前を 99-zz に） | `pg_stat_statements.track = none`（最終提出前。全クエリ統計の CPU / lock のオーバーヘッドを外す） | `sudo rm /etc/postgresql/16/main/conf.d/99-zz-pss-off.conf && sudo systemctl reload postgresql` |
+| 10-31 08:25 | asia1 / europe1 / america1 | nginx `conf.d/99-isucon-tuning.conf` に JSON の gzip を追記（`nginx -t` 後に reload。restart はしていない） | `gzip_types application/json`、`gzip_min_length 1024`、`gzip_comp_level 1`（SSE は site 設定の `gzip off` のまま、画像は JPEG なので対象外。`index.html` 392B は 1KB 未満になり無圧縮に変わる）。効果はベンチで判断 | `sudo cp -a ~/99-isucon-tuning.conf.bak-gzip /etc/nginx/conf.d/99-isucon-tuning.conf && sudo nginx -t && sudo systemctl reload nginx`（各台） |
 
 ## 未適用
 - asia2 PostgreSQL `conf.d/96-log-params.conf`（`log_parameter_max_length = 256`）: スロークエリログを再び有効にするときだけ必要（07:12 にログ自体を止めたので今は不要）
