@@ -23,6 +23,7 @@
 | 10-31 07:45 | asia2 | PostgreSQL `conf.d/97-log-off.conf`（reload 済み） | `log_checkpoints = off` | `sudo rm /etc/postgresql/16/main/conf.d/97-log-off.conf && sudo systemctl reload postgresql` |
 | 10-31 07:45 | asia2 | PostgreSQL `conf.d/99-wal.conf`（#234 / PR #254。reload 済み） | `wal_writer_delay 10ms`・`wal_writer_flush_after 8MB` は反映済み。`wal_buffers 128MB` は **pending_restart**（再起動試験の reboot で効く） | `sudo rm /etc/postgresql/16/main/conf.d/99-wal.conf && sudo systemctl restart postgresql` |
 | 10-31 07:52 | asia1 | `env.sh` に `ISUREAL_IMAGE_CACHE_MB=512`（#260 の意図。RSS が 2.7GB まで伸びていた）+ isureal-go restart（loglevel.conf もこの restart で有効化） | 起動直後 RSS 44MB、`GET /` 200、journald 10 秒で 0 行 | `env.sh.bak-20261031-imgcache` に戻して restart（env.sh の中身は表示しない） |
+| 10-31 08:10 | asia2 | PostgreSQL `conf.d/99-zz-pss-off.conf`（reload 済み。`99-isucon-tuning.conf` の `track = all` より後に読ませるため名前を 99-zz に） | `pg_stat_statements.track = none`（最終提出前。全クエリ統計の CPU / lock のオーバーヘッドを外す） | `sudo rm /etc/postgresql/16/main/conf.d/99-zz-pss-off.conf && sudo systemctl reload postgresql` |
 
 ## 未適用
 - asia2 PostgreSQL `conf.d/96-log-params.conf`（`log_parameter_max_length = 256`）: スロークエリログを再び有効にするときだけ必要（07:12 にログ自体を止めたので今は不要）
@@ -35,5 +36,5 @@
 ## 最終提出前（終了 -90 分）
 - asia2: スロークエリログは 07:12 UTC に止めた（`log_min_duration_statement = -1`）。再び 100ms にしていたら -1 に戻す
 - nginx access_log・アプリのアクションログ・log_checkpoints は 07:45 UTC に止めた（上の表）。戻さなくてよい
-- SKILL `newrelic-setup` の `toggle.sh off`
+- SKILL `newrelic-setup` の `toggle.sh off`: **08:04 UTC に実施済み**（4 台。Go agent は ENABLED=false で restart、infra agent は disable --now。asia2 では toggle.sh が isureal-go を起動してしまうので stop し直した。envcheck 4 台 passed）
 - 初手スナップショット: 4 台とも `/home/isucon/infra-backup/snapshot/`（03:03 UTC。02:33 の pg 99- と画像キャッシュを含む状態）
