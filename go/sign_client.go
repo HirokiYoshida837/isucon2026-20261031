@@ -41,8 +41,7 @@ var (
 
 	// 頼まずに asia1 自身で計算する割合（%）。残りは europe1 / america1 に等分（既定は asia 10 / europe 45 / america 45）。
 	// ベンチ中は asia1 の CPU が足りないので少なめにする。env で変えられる。
-	signLocalPercent     = 10
-	prefetchLocalPercent = 10
+	signLocalPercent = 10
 )
 
 func envPercent(name string, def int) int {
@@ -55,7 +54,6 @@ func envPercent(name string, def int) int {
 func initSignClient(cfg *Config) {
 	signToken = signTokenFor(cfg.DBPassword)
 	signLocalPercent = envPercent("ISUREAL_SIGN_LOCAL_PERCENT", signLocalPercent)
-	prefetchLocalPercent = envPercent("ISUREAL_PREFETCH_LOCAL_PERCENT", prefetchLocalPercent)
 	if cfg.Region != "asia" {
 		return
 	}

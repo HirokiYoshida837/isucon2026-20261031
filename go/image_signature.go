@@ -43,11 +43,6 @@ func signedImageURL(user User, imageID string) string {
 	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID}
 	if cacheable {
 		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= now.Add(imageURLLifetime-signedURLReuse).Unix() {
-			if e.unverified {
-				// 先読みの分は、配る時点で検証済みにする（画像取得での HMAC の再計算を省く）
-				verifiedImageSigs.add(newVerifiedSigKey(imageID, e.exp, e.sig[:]))
-				issuedImageURLs.markVerified(cacheKey)
-			}
 			return e.url
 		}
 	}
@@ -70,13 +65,7 @@ func buildSignedURL(imageID string, exp int64, sig []byte) string {
 // 署名を URL にしてキャッシュに入れる。自分が発行した署名は検証済みとして登録する（鍵は画像の持ち主のもの）。
 func storeIssued(key []byte, imageID string, exp int64, sig []byte) string {
 	u := buildSignedURL(imageID, exp, sig)
-	issuedImageURLs.put(signedURLKey{key: string(key), imageID: imageID}, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load(), sig: [32]byte(sig)})
+	issuedImageURLs.put(signedURLKey{key: string(key), imageID: imageID}, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load()})
 	verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
 	return u
-}
-
-// 先読み用。配るまで検証済みには入れない（signedImageURL のヒット時に入れる）。
-func storePrefetched(key []byte, imageID string, exp int64, sig []byte) {
-	issuedImageURLs.put(signedURLKey{key: string(key), imageID: imageID},
-		signedURLEntry{url: buildSignedURL(imageID, exp, sig), exp: exp, warm: warmingUp.Load(), sig: [32]byte(sig), unverified: true})
 }
