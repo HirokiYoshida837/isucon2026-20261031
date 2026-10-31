@@ -11,7 +11,7 @@ import (
 // 起動時に、このリージョンの初期データの署名付き URL を背景で先に作る（asia1 の imageSignature の CPU を、ベンチ開始前に使う）。
 // 1 goroutine だけで回す。POST /api/initialize の到着（ベンチ開始）で打ち切る。入れた分はそのまま使える。
 // DB が未起動などで失敗したら黙って終わる（アプリの起動は止めない）。
-const warmUpMaxEntries = 90000 // verifiedSigMaxEntries を超えると全消去されるため、その下に収める
+const warmUpMaxEntries = 90000 // 起動直後に CPU を使う量の上限（verifiedSigMaxEntries は 2 世代で残すので超えても消えない。#160）
 
 // ウォームアップ中に入れたキャッシュ項目に印を付けるための旗。
 var warmingUp atomic.Bool
