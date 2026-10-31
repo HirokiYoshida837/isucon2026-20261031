@@ -14,6 +14,7 @@ type Config struct {
 	DBPassword string
 	DBName     string
 	LogLevel   string
+	GuardInApp bool
 }
 
 func ConfigFromEnv() *Config {

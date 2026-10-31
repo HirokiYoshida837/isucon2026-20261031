@@ -23,6 +23,7 @@ func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := cmd.Run(); err != nil {
 			return err
 		}
+		guardReset()
 		imageObjectCache.reset()
 		verifiedImageSigs.reset()
 		issuedImageURLs.reset()
