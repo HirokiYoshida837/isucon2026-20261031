@@ -209,6 +209,10 @@ func updateMeHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := user.setImageKey(); err != nil {
 			return err
 		}
+		// region を変えたら、この app のセッションキャッシュに残る古い region を捨てる（次の要求で DB から読み直す。#231）
+		if input.Region != nil {
+			sessionCache.removeUser(session.UserID)
+		}
 		return c.JSON(http.StatusOK, updateMeResponse(newGetMeResponse(user)))
 	}
 }
