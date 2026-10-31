@@ -220,7 +220,7 @@ func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
 			}
 			err := h.db.SelectContext(ctx, &rows, `
     SELECT n.user_id, n.id, n.posting_window_id, w.region, n.created_at
-    FROM notifications n JOIN posting_windows w ON w.id = n.posting_window_id
+    FROM window_notifications n JOIN posting_windows w ON w.id = n.posting_window_id
     WHERE n.posting_window_id = $1 AND n.user_id = ANY($2) AND w.ended_at IS NULL
    `, window.ID, userIDs)
 			if err != nil {
