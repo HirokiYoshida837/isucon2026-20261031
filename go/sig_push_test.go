@@ -53,3 +53,48 @@ func TestSigRowsRoundTripAndPushedURL(t *testing.T) {
 }
 
 func itoa(v int64) string { return strconv.FormatInt(v, 10) }
+
+func withSigBucketSeconds(t *testing.T, s string) {
+	old := sigBucketSeconds
+	t.Cleanup(func() { sigBucketSeconds = old })
+	setSigBucketSeconds(s)
+}
+
+func TestSigBucketSecondsFromEnv(t *testing.T) {
+	for in, want := range map[string]int64{"": 300, "3600": 3600, "0": 300, "-5": 300, "abc": 300, "86400": 300, "21600": 21600} {
+		withSigBucketSeconds(t, in)
+		if sigBucketSeconds != want {
+			t.Fatalf("%q -> %d, want %d", in, sigBucketSeconds, want)
+		}
+	}
+}
+
+func TestSigBucketLongBucket(t *testing.T) {
+	withSigBucketSeconds(t, "3600")
+	life := int64(imageURLLifetime / time.Second)
+	for _, now := range []int64{1793422800, 1793425733, 1793426399} {
+		b := sigBucketOf(time.Unix(now, 0))
+		exp := sigBucketExp(b)
+		if exp <= now+life-3600 || exp > now+life {
+			t.Fatalf("exp %d out of (%d, %d]", exp, now+life-3600, now+life)
+		}
+		if sigBucketFromExp(exp) != b {
+			t.Fatalf("bucket round trip failed for %d", now)
+		}
+	}
+	// 300 秒境界の exp は 3600 秒のバケットに戻らない（先回りの署名を引かない）
+	if sigBucketFromExp(1793425800+life) != -1 {
+		t.Fatal("exp not aligned to 3600 must not map to a bucket")
+	}
+}
+
+func TestSigBucketSecondsMatch(t *testing.T) {
+	withSigBucketSeconds(t, "")
+	if !sigBucketSecondsMatch("") || !sigBucketSecondsMatch("300") || sigBucketSecondsMatch("3600") || sigBucketSecondsMatch("x") {
+		t.Fatal("default 300: mismatch check is wrong")
+	}
+	withSigBucketSeconds(t, "3600")
+	if sigBucketSecondsMatch("") || sigBucketSecondsMatch("300") || !sigBucketSecondsMatch("3600") {
+		t.Fatal("3600: an old sender (no seconds) or 300 must be rejected")
+	}
+}

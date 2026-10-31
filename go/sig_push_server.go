@@ -54,13 +54,17 @@ func startSigPushServer(dbPassword string) {
 	mux := http.NewServeMux()
 	// 持っているバケットと件数。送る側が再送の要否を見る
 	mux.HandleFunc("GET /internal/sigs/status", auth(func(w http.ResponseWriter, r *http.Request) {
+		if !sigBucketSecondsMatch(r.URL.Query().Get("seconds")) { // バケット長が違う署名は使えない
+			http.Error(w, "bucket seconds mismatch", http.StatusConflict)
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(pushedSigs.counts())
 	}))
 	mux.HandleFunc("POST /internal/sigs", auth(func(w http.ResponseWriter, r *http.Request) {
 		bucket, err := strconv.ParseInt(r.URL.Query().Get("bucket"), 10, 64)
 		cur := sigBucketOf(time.Now())
-		if err != nil || bucket < cur || bucket > cur+2 {
+		if err != nil || bucket < cur || bucket > cur+2 || !sigBucketSecondsMatch(r.URL.Query().Get("seconds")) {
 			http.Error(w, "bad bucket", http.StatusBadRequest)
 			return
 		}

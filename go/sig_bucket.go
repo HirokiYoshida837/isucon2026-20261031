@@ -3,14 +3,45 @@ package isureal
 import (
 	"crypto/subtle"
 	"errors"
+	"log"
+	"strconv"
 	"sync"
 	"time"
 )
 
-// 署名の exp を signedURLReuse（5 分）の境界に揃える。exp = バケット番号 × 300 + 24h。
+// 署名の exp をバケット長の境界に揃える。exp = バケット番号 × sigBucketSeconds + 24h。
 // 同じバケットの間は同じ exp・同じ署名になるので、europe1 / america1 が先回りで計算して asia1 に渡せる（sig_push_*.go）。
-// exp は now+24h−5分 〜 now+24h に収まる（#63 の 5 分再利用と同じ範囲）。
-const sigBucketSeconds = int64(signedURLReuse / time.Second)
+// exp は now+24h−バケット長 〜 now+24h に収まる（既定 300 秒 = #63 の 5 分再利用と同じ範囲）。
+// バケット長は ISUREAL_SIG_BUCKET_SECONDS で起動時に 1 回だけ決める（setSigBucketSeconds。以後変えない）。
+// 3 台で値が違うと asia1 は先回りの署名を受け取らず、自前で計算する。
+var sigBucketSeconds = int64(signedURLReuse / time.Second)
+
+const sigBucketSecondsMax = 6 * 3600
+
+// NewServer の最初に 1 回だけ呼ぶ。空は既定値、数字でない・0 以下・上限超えは既定値に戻してログに出す
+func setSigBucketSeconds(s string) {
+	def := int64(signedURLReuse / time.Second)
+	v := def
+	if s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n <= 0 || n > sigBucketSecondsMax {
+			log.Printf("sig bucket: invalid ISUREAL_SIG_BUCKET_SECONDS=%q (1..%d); using %d", s, sigBucketSecondsMax, def)
+		} else {
+			v = n
+		}
+	}
+	sigBucketSeconds = v
+	log.Printf("sig bucket: %d seconds", v)
+}
+
+// 送る側が付けてきたバケット長が自分と同じか。付いていなければ旧版（既定値）とみなす
+func sigBucketSecondsMatch(s string) bool {
+	if s == "" {
+		return sigBucketSeconds == int64(signedURLReuse/time.Second)
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	return err == nil && v == sigBucketSeconds
+}
 
 func sigBucketOf(now time.Time) int64 { return now.Unix() / sigBucketSeconds }
 
