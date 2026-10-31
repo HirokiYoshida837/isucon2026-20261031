@@ -38,6 +38,7 @@ type HandlerContext struct {
 	Config        *Config
 	IPBans        *IPBanList
 	Notifications *NotificationHub
+	IPBanDetector *IPBanDetector
 }
 
 func NewServer(config *Config) *echo.Echo {
@@ -48,9 +49,6 @@ func NewServer(config *Config) *echo.Echo {
 	e := echo.New()
 	e.IPExtractor = extractClientIP
 
-	e.Use(NewRelicMiddleware())
-	e.Use(ActionLogMiddleware(config.LogLevel, os.Stdout))
-	e.Use(middleware.Recover())
 	e.HTTPErrorHandler = APIErrorHandler
 
 	dbConfig, err := pgx.ParseConfig(config.DatabaseDSN())
@@ -70,13 +68,19 @@ func NewServer(config *Config) *echo.Echo {
 	}
 	warmUpDB(db, dbMaxConns)
 
+	ipBans := &IPBanList{}
 	handlerContext := &HandlerContext{
 		DB:            db,
 		Config:        config,
-		IPBans:        &IPBanList{},
+		IPBans:        ipBans,
+		IPBanDetector: NewIPBanDetector(db, ipBans),
 		Notifications: NewNotificationHub(db, config.Region),
 	}
 	go handlerContext.Notifications.Run(context.Background())
+	// ミドルウェアの順序は変えない（NewRelic → ActionLog → Recover → IPBan）
+	e.Use(NewRelicMiddleware())
+	e.Use(ActionLogMiddleware(config.LogLevel, os.Stdout, handlerContext.IPBanDetector))
+	e.Use(middleware.Recover())
 	e.Use(IPBanMiddleware(handlerContext))
 
 	e.POST("/api/initialize", initializeHandler(handlerContext))

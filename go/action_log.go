@@ -55,7 +55,7 @@ var actionNames = map[string]string{
 
 var logLevelRanks = map[string]int{"debug": 0, "info": 1, "error": 2}
 
-func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc {
+func ActionLogMiddleware(minLevel string, output io.Writer, detector *IPBanDetector) echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c *echo.Context) error {
 			err := next(c)
@@ -63,6 +63,12 @@ func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc 
 				c.Echo().HTTPErrorHandler(c, err)
 			}
 			_, status := echo.ResolveResponseStatus(c.Response(), err)
+
+			route := c.RouteInfo()
+			action, ok := actionNames[route.Method+" "+route.Path]
+			abuse, _ := c.Get("abuse").(string)
+			// ログに出すかどうか（minLevel）に関係なく数える。ログを絞っても BAN が動くようにするため
+			detector.Observe(action, status, abuse, c.RealIP())
 
 			level := "info"
 			switch {
@@ -75,7 +81,6 @@ func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc 
 				return nil
 			}
 
-			route := c.RouteInfo()
 			entry := map[string]any{
 				"level":   level,
 				"action":  nil,
@@ -83,7 +88,6 @@ func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc 
 				"ip":      c.RealIP(),
 				"user_id": nil,
 			}
-			action, ok := actionNames[route.Method+" "+route.Path]
 			if ok {
 				entry["action"] = action
 			}
@@ -96,7 +100,6 @@ func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc 
 					entry["username"] = username
 				}
 			}
-			abuse, _ := c.Get("abuse").(string)
 			if abuse != "" {
 				entry["abuse"] = abuse
 			}
