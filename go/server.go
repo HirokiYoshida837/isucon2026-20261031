@@ -1,7 +1,10 @@
 package isureal
 
 import (
+	"context"
+	"database/sql"
 	"os"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
@@ -10,6 +13,25 @@ import (
 	"github.com/labstack/echo/v5/middleware"
 	"github.com/newrelic/go-agent/v3/integrations/nrpgx5"
 )
+
+const dbMaxConns = 30
+
+// warmUpDB は起動時に接続をプール上限まで張っておく（最初のリクエストで接続確立の遅延を払わないため）
+func warmUpDB(db *sqlx.DB, n int) {
+	conns := make([]*sql.Conn, 0, n)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	for range n {
+		conn, err := db.Conn(ctx)
+		if err != nil {
+			break
+		}
+		conns = append(conns, conn)
+	}
+	for _, conn := range conns {
+		conn.Close()
+	}
+}
 
 type HandlerContext struct {
 	DB     *sqlx.DB
@@ -36,11 +58,16 @@ func NewServer(config *Config) *echo.Echo {
 	}
 	dbConfig.Tracer = nrpgx5.NewTracer(nrpgx5.WithQueryParameters(false))
 	db := sqlx.NewDb(stdlib.OpenDB(*dbConfig), "pgx")
-	db.SetMaxOpenConns(30)
+	// 接続は張りっぱなしにする。europe・america から asia2 への接続確立は 1 回 0.5〜0.8 秒かかる
+	db.SetMaxOpenConns(dbMaxConns)
+	db.SetMaxIdleConns(dbMaxConns)
+	db.SetConnMaxLifetime(0)
+	db.SetConnMaxIdleTime(0)
 	err = db.Ping()
 	if err != nil {
 		panic("failed to ping database: " + err.Error())
 	}
+	warmUpDB(db, dbMaxConns)
 
 	handlerContext := &HandlerContext{
 		DB:     db,
