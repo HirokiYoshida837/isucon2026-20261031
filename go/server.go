@@ -81,6 +81,7 @@ func NewServer(config *Config) *echo.Echo {
 		Notifications: NewNotificationHub(db, dbConfig, config.Region, config.NotificationPollInterval),
 	}
 	go handlerContext.Notifications.Run(context.Background())
+	handlerContext.IPBans.Start(db)
 	e.Use(IPBanMiddleware(handlerContext))
 	if config.GuardInApp {
 		startGuard(db, handlerContext.IPBans)
