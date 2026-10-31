@@ -7,6 +7,7 @@ import (
 
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v5"
+	"golang.org/x/sync/errgroup"
 )
 
 type getMemoriesRequest struct {
@@ -113,14 +114,29 @@ func loadMemoryInteractions(ctx context.Context, db sqlx.QueryerContext, items [
 		itemByPostID[items[i].ID] = &items[i]
 	}
 
-	query, args, err := sqlx.In(`AND r.post_id IN (?) ORDER BY r.created_at DESC, r.id DESC`, postIDs)
-	if err != nil {
+	var reactions []RealMojiWithReactor
+	var comments []CommentWithAuthor
+	g, gctx := errgroup.WithContext(ctx)
+	g.Go(func() error {
+		query, args, err := sqlx.In(`AND r.post_id IN (?) ORDER BY r.created_at DESC, r.id DESC`, postIDs)
+		if err != nil {
+			return err
+		}
+		reactions, err = selectCurrentRealMojis(gctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
+		return err
+	})
+	g.Go(func() error {
+		query, args, err := sqlx.In(`AND c.post_id IN (?) ORDER BY c.created_at, c.id`, postIDs)
+		if err != nil {
+			return err
+		}
+		comments, err = selectCommentsWithAuthor(gctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
+		return err
+	})
+	if err := g.Wait(); err != nil {
 		return err
 	}
-	reactions, err := selectCurrentRealMojis(ctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
-	if err != nil {
-		return err
-	}
+
 	for _, reaction := range reactions {
 		item := itemByPostID[reaction.PostID]
 		if len(item.RealMojis) < 50 {
@@ -128,14 +144,6 @@ func loadMemoryInteractions(ctx context.Context, db sqlx.QueryerContext, items [
 		}
 	}
 
-	query, args, err = sqlx.In(`AND c.post_id IN (?) ORDER BY c.created_at, c.id`, postIDs)
-	if err != nil {
-		return err
-	}
-	comments, err := selectCommentsWithAuthor(ctx, db, sqlx.Rebind(sqlx.DOLLAR, query), args...)
-	if err != nil {
-		return err
-	}
 	for _, comment := range comments {
 		item := itemByPostID[comment.PostID]
 		if len(item.Comments) < 50 {
