@@ -255,24 +255,38 @@ func updatePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.GetContext(ctx, &lockedUserID, `SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID); err != nil {
 			return err
 		}
-		post, err := getPost(ctx, tx, input.PostID)
+		var updated PostWithAuthor
+		err = tx.GetContext(ctx, &updated, `
+   UPDATE posts p SET caption = COALESCE($3, p.caption), visibility = COALESCE($4, p.visibility)
+   FROM posting_windows w, users u
+   WHERE p.id = $1 AND p.author_id = $2 AND p.deleted_at IS NULL
+     AND w.id = p.posting_window_id AND w.ended_at IS NULL
+     AND u.id = p.author_id AND u.status = 'active'
+   RETURNING p.id, p.author_id, p.posting_window_id, p.image_id, p.caption, p.visibility,
+     p.location_kind, p.latitude, p.longitude, p.locality, p.posted_at,
+     w.on_time_deadline, w.ended_at AS window_ended_at, `+userColumnsAs("u", "author"),
+			input.PostID, userID, input.Caption, input.Visibility)
 		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusNotFound, "post_not_found")
+			// 0 行のときだけ従来の判定
+			post, err := getPost(ctx, tx, input.PostID)
+			if errors.Is(err, sql.ErrNoRows) {
+				return NewAPIError(http.StatusNotFound, "post_not_found")
+			}
+			if err != nil {
+				return err
+			}
+			if post.AuthorID != userID || post.WindowEndedAt != nil {
+				return NewAPIError(http.StatusForbidden, "post_not_editable")
+			}
+			if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = COALESCE($2, caption), visibility = COALESCE($3, visibility) WHERE id = $1`, post.ID, input.Caption, input.Visibility); err != nil {
+				return err
+			}
+			updated, err = getPostWithAuthor(ctx, tx, post.ID)
 		}
 		if err != nil {
 			return err
 		}
-		if post.AuthorID != userID {
-			return NewAPIError(http.StatusForbidden, "post_not_editable")
-		}
-		if post.WindowEndedAt != nil {
-			return NewAPIError(http.StatusForbidden, "post_not_editable")
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE posts SET caption = COALESCE($2, caption), visibility = COALESCE($3, visibility) WHERE id = $1`, post.ID, input.Caption, input.Visibility); err != nil {
-			return err
-		}
-		updated, err := getPostWithAuthor(ctx, tx, post.ID)
-		if err != nil {
+		if err := updated.Author.setImageKey(); err != nil {
 			return err
 		}
 		if err := tx.Commit(); err != nil {
@@ -303,7 +317,18 @@ func deletePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.GetContext(ctx, &lockedUserID, `SELECT id FROM users WHERE id = $1 FOR NO KEY UPDATE`, userID); err != nil {
 			return err
 		}
-		post, err := getPost(ctx, tx, input.PostID)
+		var post struct {
+			Post
+			Deletions int `db:"deletions"`
+		}
+		err = tx.GetContext(ctx, &post, `
+   SELECT `+postColumns+`, (
+     SELECT count(*) FROM posts dp JOIN posting_windows dw ON dw.id = dp.posting_window_id
+     WHERE dp.author_id = $2 AND dp.deleted_at IS NOT NULL AND dw.local_date = w.local_date
+   ) AS deletions
+   FROM posts p JOIN posting_windows w ON w.id = p.posting_window_id
+   WHERE p.id = $1 AND p.deleted_at IS NULL
+  `, input.PostID, userID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusNotFound, "post_not_found")
 		}
@@ -313,14 +338,7 @@ func deletePostHandler(h *HandlerContext) echo.HandlerFunc {
 		if post.AuthorID != userID {
 			return NewAPIError(http.StatusForbidden, "post_not_editable")
 		}
-		var deletions int
-		if err := tx.GetContext(ctx, &deletions, `
-   SELECT count(*) FROM posts p JOIN posting_windows w ON w.id = p.posting_window_id
-   WHERE p.author_id = $1 AND p.deleted_at IS NOT NULL
-     AND w.local_date = (SELECT local_date FROM posting_windows WHERE id = $2)
-  `, userID, post.PostingWindowID); err != nil {
-			return err
-		}
+		deletions := post.Deletions
 		if deletions >= 2 {
 			return NewAPIError(http.StatusConflict, "post_slot_unavailable")
 		}
