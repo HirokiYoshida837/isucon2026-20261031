@@ -10,6 +10,18 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
+// readSized はサイズが分かっていれば先に確保して 1 回で読む（io.ReadAll の伸長とゼロ埋めを省く。#183）
+func readSized(r io.Reader, n int64) ([]byte, error) {
+	if n <= 0 {
+		return io.ReadAll(r)
+	}
+	buf := make([]byte, n)
+	if _, err := io.ReadFull(r, buf); err != nil {
+		return nil, err
+	}
+	return buf, nil
+}
+
 func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		if c.Request().Header.Get("Content-Type") != "image/jpeg" {
@@ -17,7 +29,7 @@ func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 			io.Copy(io.Discard, c.Request().Body)
 			return NewAPIError(http.StatusUnsupportedMediaType, "unsupported_media_type")
 		}
-		data, err := io.ReadAll(c.Request().Body)
+		data, err := readSized(c.Request().Body, c.Request().ContentLength)
 		if err != nil {
 			return err
 		}
