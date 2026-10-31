@@ -46,7 +46,7 @@ func getRelationshipsHandler(h *HandlerContext) echo.HandlerFunc {
 		var query string
 		switch input.Kind {
 		case "friends":
-			query = `SELECT id, user_low_id AS first_id, user_high_id AS second_id, updated_at FROM friendships WHERE user_low_id=$1 OR user_high_id=$1`
+			query = `SELECT relation_id AS id, user_id AS first_id, friend_id AS second_id, updated_at FROM friend_edges WHERE user_id=$1`
 		case "following":
 			query = `SELECT id, follower_id AS first_id, followee_id AS second_id, updated_at FROM follows WHERE follower_id=$1`
 		case "followers":
