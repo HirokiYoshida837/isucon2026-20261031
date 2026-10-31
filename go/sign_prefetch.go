@@ -58,7 +58,7 @@ func prefetchSigs(ctx context.Context, list []sigReq) {
 			bctx, cancel := context.WithTimeout(ctx, prefetchBatchTime)
 			defer cancel()
 			exp := time.Now().Add(imageURLLifetime).Unix()
-			signAcross(bctx, exp, batch, func(r sigReq, sig []byte) { storePrefetched(r.key, r.imageID, exp, sig) })
+			signAcross(bctx, exp, batch, prefetchLocalPercent, func(r sigReq, sig []byte) { storePrefetched(r.key, r.imageID, exp, sig) })
 		}()
 	}
 	wg.Wait()
