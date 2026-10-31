@@ -108,7 +108,7 @@ func splitIDs(ids string) []string {
 	return strings.Split(ids, ",")
 }
 
-func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID string) (viewerContext, error) {
+func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID string, withEdges bool) (viewerContext, error) {
 	viewer := viewerContext{Friends: map[string]bool{}, FriendsOfFriends: map[string]bool{}, MutualFriends: map[string]int{}, Blocked: map[string]bool{}}
 	var row struct {
 		User
@@ -135,12 +135,12 @@ func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID str
       FROM block_relations WHERE blocker_id = $1 OR blocked_id = $1
     ), '') AS blocked_ids,
     COALESCE((SELECT string_agg(id, ',') FROM friend_ids), '') AS friend_ids,
-    COALESCE((
+    CASE WHEN $2::bool THEN COALESCE((
       SELECT string_agg(user_low_id || ',' || user_high_id, ',') FROM friendships
       WHERE user_low_id = ANY(ARRAY(SELECT id FROM friend_ids)) OR user_high_id = ANY(ARRAY(SELECT id FROM friend_ids))
-    ), '') AS friend_edges
+    ), '') ELSE '' END AS friend_edges
   FROM users u WHERE u.id = $1 AND u.status = 'active'
- `, viewerID); err != nil {
+ `, viewerID, withEdges); err != nil {
 		return viewer, err
 	}
 	viewer.User = row.User
