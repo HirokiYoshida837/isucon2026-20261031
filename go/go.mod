@@ -7,6 +7,17 @@ require (
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jmoiron/sqlx v1.4.0
 	github.com/labstack/echo/v5 v5.3.1
+	github.com/newrelic/go-agent/v3 v3.45.0
+	github.com/newrelic/go-agent/v3/integrations/nrpgx5 v1.3.4
+)
+
+require (
+	github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 // indirect
+	golang.org/x/net v0.57.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
+	google.golang.org/genproto/googleapis/rpc v0.0.0-20260526163538-3dc84a4a5aaa // indirect
+	google.golang.org/grpc v1.83.1 // indirect
+	google.golang.org/protobuf v1.36.11 // indirect
 )
 
 require (

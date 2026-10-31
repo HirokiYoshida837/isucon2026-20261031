@@ -3,11 +3,12 @@ package isureal
 import (
 	"os"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"github.com/labstack/echo/v5"
 	"github.com/labstack/echo/v5/middleware"
-
-	_ "github.com/jackc/pgx/v5/stdlib"
+	"github.com/newrelic/go-agent/v3/integrations/nrpgx5"
 )
 
 type HandlerContext struct {
@@ -20,17 +21,21 @@ func NewServer(config *Config) *echo.Echo {
 	if !validRegion(config.Region) {
 		panic("invalid server region: " + config.Region)
 	}
+	initNewRelic()
 	e := echo.New()
 	e.IPExtractor = extractClientIP
 
+	e.Use(NewRelicMiddleware())
 	e.Use(ActionLogMiddleware(config.LogLevel, os.Stdout))
 	e.Use(middleware.Recover())
 	e.HTTPErrorHandler = APIErrorHandler
 
-	db, err := sqlx.Open("pgx", config.DatabaseDSN())
+	dbConfig, err := pgx.ParseConfig(config.DatabaseDSN())
 	if err != nil {
 		panic("failed to open database: " + err.Error())
 	}
+	dbConfig.Tracer = nrpgx5.NewTracer(nrpgx5.WithQueryParameters(false))
+	db := sqlx.NewDb(stdlib.OpenDB(*dbConfig), "pgx")
 	db.SetMaxOpenConns(30)
 	err = db.Ping()
 	if err != nil {
