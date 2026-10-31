@@ -8,3 +8,5 @@
 CREATE INDEX IF NOT EXISTS idx_friendships_user_high_id ON friendships (user_high_id);
 CREATE INDEX IF NOT EXISTS idx_block_relations_blocked_id ON block_relations (blocked_id);
 CREATE INDEX IF NOT EXISTS idx_posts_posting_window_id_posted_at_id ON posts (posting_window_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
+-- register の LOCK TABLE users を外すための一意制約（go/user_api.go の ON CONFLICT (username) が使う）
+CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (username);
