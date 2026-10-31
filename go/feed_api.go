@@ -69,11 +69,49 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 		if ranked {
 			beforePostedAt, beforeID = nil, ""
 		}
-		posts, err := selectPostsWithAuthor(ctx, h.DB, `
+		// canView / matchesFeed と同じ絞り込みを SQL に寄せる（Go 側の判定も残す）。
+		// 今日投稿していない人は自分以外の投稿を見られない
+		if !viewer.HasPostedToday {
+			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
+		}
+		blocked := make([]string, 0, len(viewer.Blocked))
+		for id := range viewer.Blocked {
+			blocked = append(blocked, id)
+		}
+		conditions := `
    AND p.author_id <> $1 AND w.ended_at IS NULL
    AND ($2::timestamptz IS NULL OR (p.posted_at, p.id) < ($2, $3))
-   ORDER BY p.posted_at DESC, p.id DESC
-  `, viewer.ID, beforePostedAt, beforeID)
+   AND p.author_id <> ALL($4::text[])
+   AND p.visibility IN ('public', 'friends', 'friends_of_friends')`
+		args := []any{viewer.ID, beforePostedAt, beforeID, blocked}
+		limit := ""
+		authors := make([]string, 0)
+		switch input.Feed {
+		case "public":
+			conditions += ` AND p.visibility = 'public'`
+			limit = " LIMIT 51" // SQL の条件が canView && matchesFeed と一致するので先頭 51 件で足りる
+		case "friends":
+			for id := range viewer.Friends {
+				authors = append(authors, id)
+			}
+			limit = " LIMIT 51"
+		case "friends-of-friends":
+			for id := range viewer.FriendsOfFriends {
+				if !viewer.Friends[id] {
+					authors = append(authors, id)
+				}
+			}
+		case "following":
+			for id := range following {
+				authors = append(authors, id)
+			}
+		}
+		if input.Feed != "public" {
+			conditions += ` AND p.author_id = ANY($5::text[])`
+			args = append(args, authors)
+		}
+		posts, err := selectPostsWithAuthor(ctx, h.DB, conditions+`
+   ORDER BY p.posted_at DESC, p.id DESC`+limit, args...)
 		if err != nil {
 			return err
 		}
