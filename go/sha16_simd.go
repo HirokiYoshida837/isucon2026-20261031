@@ -116,18 +116,16 @@ func hmacChain16(keys, vals *[simdLanes][32]byte, iters int) [simdLanes][32]byte
 	opad := padState(&keyWords, 0x5c5c5c5c)
 	v := loadWords(vals)
 
-	// 32 バイトのメッセージの SHA-256 の末尾（0x80、0 埋め、全長 (64+32)*8 = 768 ビット）
-	var in [16]vec
-	in[8] = archsimd.BroadcastUint32x16(0x80000000)
-	in[15] = archsimd.BroadcastUint32x16(768)
-	for it := 0; it < iters; it++ {
-		inner := ipad
-		copy(in[:8], v[:])
-		compress16(&inner, &in)
-		outer := opad
-		copy(in[:8], inner[:])
-		compress16(&outer, &in)
-		v = outer
+	// 連鎖はアセンブリで回す（sha16_avx512_amd64.s）
+	var ip, op, vw [8][16]uint32
+	for j := range 8 {
+		ipad[j].Store(&ip[j])
+		opad[j].Store(&op[j])
+		v[j].Store(&vw[j])
+	}
+	hmacChain16AVX512(&ip, &op, &vw, iters)
+	for j := range 8 {
+		v[j] = archsimd.LoadUint32x16(&vw[j])
 	}
 	var out [simdLanes][32]byte
 	storeWords(&v, &out)
