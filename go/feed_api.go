@@ -1,11 +1,9 @@
 package isureal
 
 import (
-	"context"
 	"database/sql"
 	"errors"
 	"net/http"
-	"sort"
 	"time"
 
 	"github.com/jmoiron/sqlx"
@@ -48,10 +46,11 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusBadRequest, "invalid_pagination")
 		}
 		ctx := c.Request().Context()
-		// 友達の全辺（FriendsOfFriends / MutualFriends）を使うのは friends-of-friends だけ。
+		// 友達の全辺（FriendsOfFriends / MutualFriends）はどのフィードでも読まない。
+		// friends-of-friends は共通の友達数・スコアを SQL で出す（friendsOfFriendsFeed）。
 		// following は友達の友達の判定を SQL（EXISTS）で行う。public は SQL で visibility='public' に絞られ、
 		// friends は著者が友達なので canView は Friends だけで通る
-		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, input.Feed == "friends-of-friends")
+		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, false)
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
 		}
@@ -60,9 +59,6 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		following := map[string]bool{}
 		beforePostedAt, beforeID := input.BeforePostedAt, input.BeforeID
-		if ranked {
-			beforePostedAt, beforeID = nil, ""
-		}
 		// canView / matchesFeed と同じ絞り込みを SQL に寄せる（Go 側の判定も残す）。
 		// 今日投稿していない人は自分以外の投稿を見られない
 		if !viewer.HasPostedToday {
@@ -71,6 +67,9 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 		blocked := make([]string, 0, len(viewer.Blocked))
 		for id := range viewer.Blocked {
 			blocked = append(blocked, id)
+		}
+		if ranked {
+			return friendsOfFriendsFeed(c, h.DB, viewer, blocked, input)
 		}
 		conditions := `
    AND p.author_id <> $1 AND w.ended_at IS NULL
@@ -89,12 +88,6 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 				authors = append(authors, id)
 			}
 			limit = " LIMIT 51"
-		case "friends-of-friends":
-			for id := range viewer.FriendsOfFriends {
-				if !viewer.Friends[id] {
-					authors = append(authors, id)
-				}
-			}
 		case "following":
 			// フォロー先の取得と canView の公開範囲判定（友達の友達は friendships の EXISTS）を SQL に寄せる。
 			// ranked ではなく SQL の条件が canView && matchesFeed と一致するので、Go 側の判定は要らず先頭 51 件で足りる
@@ -127,107 +120,111 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 				candidates = append(candidates, post)
 			}
 		}
-		var scores map[string]int64
-		if ranked {
-			if scores, err = recommendationScores(ctx, h.DB, viewer, candidates); err != nil {
-				return err
-			}
-			sort.SliceStable(candidates, func(i, j int) bool {
-				return scores[candidates[i].ID] > scores[candidates[j].ID]
-			})
-		}
 		items := make([]feedItemResponse, 0)
 		for _, post := range candidates {
-			score := scores[post.ID]
-			if ranked && input.BeforeScore != nil && !rankedBefore(score, post.Post, *input.BeforeScore, *input.BeforePostedAt, input.BeforeID) {
-				continue
-			}
-			item := feedItemResponse{createPostResponse: newPostResponse(post.Post, post.Author)}
-			if ranked {
-				item.Score = &score
-			}
-			items = append(items, item)
+			items = append(items, feedItemResponse{createPostResponse: newPostResponse(post.Post, post.Author)})
 			if len(items) == 51 {
 				break
 			}
 		}
-		hasMore := len(items) > 50
-		if hasMore {
-			items = items[:50]
-		}
-		return c.JSON(http.StatusOK, getFeedResponse{Items: items, HasMore: hasMore})
+		return feedResponse(c, items)
 	}
 }
 
-func rankedBefore(score int64, post Post, beforeScore int64, beforePostedAt time.Time, beforeID string) bool {
-	if score != beforeScore {
-		return score < beforeScore
+func feedResponse(c *echo.Context, items []feedItemResponse) error {
+	hasMore := len(items) > 50
+	if hasMore {
+		items = items[:50]
 	}
-	if !post.PostedAt.Equal(beforePostedAt) {
-		return post.PostedAt.Before(beforePostedAt)
-	}
-	return post.ID < beforeID
+	return c.JSON(http.StatusOK, getFeedResponse{Items: items, HasMore: hasMore})
 }
 
-func recommendationScores(ctx context.Context, db sqlx.QueryerContext, viewer viewerContext, posts []PostWithAuthor) (map[string]int64, error) {
-	scores := make(map[string]int64, len(posts))
-	if len(posts) == 0 {
-		return scores, nil
+// friends-of-friends のスコア（10*友達のエンゲージメント数 + 3*共通の友達数 + min(connections, 30)）と
+// 並び（score DESC, posted_at DESC, id DESC）、カーソル、先頭 51 件を SQL 1 本で出し、投稿本体を引き直す。
+// 著者は友達と辺を持つ（共通の友達がいる）友達以外のユーザー。canView から公開範囲は public / friends_of_friends。
+// connections は著者の各友達 Y について Y と viewer の共通の友達数を足したもの（Y = viewer は 0）
+func friendsOfFriendsFeed(c *echo.Context, db sqlx.QueryerContext, viewer viewerContext, blocked []string, input getFeedRequest) error {
+	ctx := c.Request().Context()
+	friends := make([]string, 0, len(viewer.Friends))
+	for id := range viewer.Friends {
+		friends = append(friends, id)
 	}
-	authorIDs := make([]string, 0, len(posts))
-	postIDs := make([]string, 0, len(posts))
+	var ranked []struct {
+		ID    string `db:"id"`
+		Score int64  `db:"score"`
+	}
+	if err := sqlx.SelectContext(ctx, db, &ranked, `
+  WITH edges AS (
+    SELECT user_high_id AS id FROM friendships WHERE user_low_id = ANY($2::text[])
+    UNION ALL
+    SELECT user_low_id FROM friendships WHERE user_high_id = ANY($2::text[])
+  ), mutual AS MATERIALIZED (
+    SELECT id, count(*) AS n FROM edges WHERE id <> $1 GROUP BY id
+  ), cand AS MATERIALIZED (
+    SELECT p.id, p.author_id, p.posted_at, m.n AS mutual
+    FROM posts p
+    JOIN mutual m ON m.id = p.author_id
+    JOIN posting_windows w ON w.id = p.posting_window_id
+    JOIN users u ON u.id = p.author_id AND u.status = 'active'
+    WHERE p.deleted_at IS NULL AND w.ended_at IS NULL
+      AND p.author_id <> ALL($2::text[]) AND p.author_id <> ALL($3::text[])
+      AND p.visibility IN ('public', 'friends_of_friends')
+  ), conn AS (
+    SELECT a.author_id, sum(m.n) AS n
+    FROM (SELECT DISTINCT author_id FROM cand) a
+    CROSS JOIN LATERAL (
+      SELECT user_high_id AS id FROM friendships WHERE user_low_id = a.author_id
+      UNION ALL
+      SELECT user_low_id FROM friendships WHERE user_high_id = a.author_id
+    ) f
+    JOIN mutual m ON m.id = f.id
+    GROUP BY a.author_id
+  ), eng AS (
+    SELECT e.post_id, count(*) AS n FROM (
+      SELECT r.post_id, r.reactor_id AS user_id FROM realmojis r
+      WHERE r.post_id IN (SELECT id FROM cand) AND r.reactor_id = ANY($2::text[])
+        AND r.replaced_at IS NULL AND r.deleted_at IS NULL
+      UNION
+      SELECT cm.post_id, cm.author_id FROM comments cm
+      WHERE cm.post_id IN (SELECT id FROM cand) AND cm.author_id = ANY($2::text[]) AND cm.deleted_at IS NULL
+    ) e JOIN users u ON u.id = e.user_id AND u.status = 'active'
+    GROUP BY e.post_id
+  ), scored AS (
+    SELECT c.id, c.posted_at,
+      (10*COALESCE(e.n, 0) + 3*c.mutual + LEAST(COALESCE(cn.n, 0), 30))::bigint AS score
+    FROM cand c
+    LEFT JOIN eng e ON e.post_id = c.id
+    LEFT JOIN conn cn ON cn.author_id = c.author_id
+  )
+  SELECT id, score FROM scored
+  WHERE $4::bigint IS NULL OR score < $4
+     OR (score = $4 AND (posted_at < $5::timestamptz OR (posted_at = $5::timestamptz AND id COLLATE "C" < $6::text)))
+  ORDER BY score DESC, posted_at DESC, id COLLATE "C" DESC
+  LIMIT 51`, viewer.ID, friends, blocked, input.BeforeScore, input.BeforePostedAt, input.BeforeID); err != nil {
+		return err
+	}
+	ids := make([]string, 0, len(ranked))
+	for _, r := range ranked {
+		ids = append(ids, r.ID)
+	}
+	posts, err := selectPostsWithAuthor(ctx, db, `AND p.id = ANY($1::text[])`, ids)
+	if err != nil {
+		return err
+	}
+	byID := make(map[string]PostWithAuthor, len(posts))
 	for _, post := range posts {
-		authorIDs = append(authorIDs, post.AuthorID)
-		postIDs = append(postIDs, post.ID)
+		byID[post.ID] = post
 	}
-
-	query, args, err := sqlx.In(`SELECT user_low_id, user_high_id FROM friendships WHERE user_low_id IN (?) OR user_high_id IN (?)`, authorIDs, authorIDs)
-	if err != nil {
-		return nil, err
-	}
-	var friendships []struct {
-		UserLowID  string `db:"user_low_id"`
-		UserHighID string `db:"user_high_id"`
-	}
-	if err := sqlx.SelectContext(ctx, db, &friendships, sqlx.Rebind(sqlx.DOLLAR, query), args...); err != nil {
-		return nil, err
-	}
-	connections := map[string]int64{}
-	for _, friendship := range friendships {
-		connections[friendship.UserLowID] += int64(viewer.MutualFriends[friendship.UserHighID])
-		connections[friendship.UserHighID] += int64(viewer.MutualFriends[friendship.UserLowID])
-	}
-
-	query, args, err = sqlx.In(`
-  SELECT r.post_id, r.reactor_id AS user_id FROM realmojis r
-  JOIN users u ON u.id = r.reactor_id AND u.status = 'active'
-  WHERE r.post_id IN (?) AND r.replaced_at IS NULL AND r.deleted_at IS NULL
-  UNION
-  SELECT c.post_id, c.author_id AS user_id FROM comments c
-  JOIN users u ON u.id = c.author_id AND u.status = 'active'
-  WHERE c.post_id IN (?) AND c.deleted_at IS NULL
- `, postIDs, postIDs)
-	if err != nil {
-		return nil, err
-	}
-	var engagements []struct {
-		PostID string `db:"post_id"`
-		UserID string `db:"user_id"`
-	}
-	if err := sqlx.SelectContext(ctx, db, &engagements, sqlx.Rebind(sqlx.DOLLAR, query), args...); err != nil {
-		return nil, err
-	}
-	friendEngagements := map[string]int64{}
-	for _, engagement := range engagements {
-		if viewer.Friends[engagement.UserID] {
-			friendEngagements[engagement.PostID]++
+	items := make([]feedItemResponse, 0, len(ranked))
+	for _, r := range ranked {
+		post, ok := byID[r.ID]
+		if !ok {
+			continue
 		}
+		score := r.Score
+		items = append(items, feedItemResponse{createPostResponse: newPostResponse(post.Post, post.Author), Score: &score})
 	}
-
-	for _, post := range posts {
-		scores[post.ID] = 10*friendEngagements[post.ID] + 3*int64(viewer.MutualFriends[post.AuthorID]) + min(connections[post.AuthorID], 30)
-	}
-	return scores, nil
+	return feedResponse(c, items)
 }
 
 func matchesFeed(viewer viewerContext, following map[string]bool, post Post, feed string) bool {
