@@ -26,3 +26,8 @@ CREATE INDEX IF NOT EXISTS idx_friend_requests_requester_id_recipient_id ON frie
 CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient_id_requester_id ON friend_requests (recipient_id, requester_id) WHERE status = 'pending';
 CREATE INDEX IF NOT EXISTS idx_follows_followee_id_follower_id ON follows (followee_id, follower_id);
 CREATE INDEX IF NOT EXISTS idx_posting_windows_local_date ON posting_windows (local_date);
+-- memories / 投稿詳細の realmojis・comments 取得を Index Only Scan にして heap のランダム読み（1 投稿 1 ページ、ディスク 0.5〜0.7ms）を消す（#181）
+-- SELECT 句の列を全部 INCLUDE に持つ（replaced_at / deleted_at は WHERE で NULL 固定だが SELECT 句にあるので入れる）
+-- DB には先に CREATE INDEX CONCURRENTLY で貼る（realmojis 120 万行・comments 55 万行）
+CREATE INDEX IF NOT EXISTS idx_realmojis_post_id_active_cover ON realmojis (post_id, created_at DESC, id DESC) INCLUDE (reactor_id, image_id, reaction_type, replaced_at, deleted_at) WHERE replaced_at IS NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_comments_post_id_active_cover ON comments (post_id, created_at, id) INCLUDE (author_id, body, deleted_at) WHERE deleted_at IS NULL;
