@@ -110,6 +110,24 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			conditions += ` AND p.author_id = ANY($5::text[])`
 			args = append(args, authors)
 		}
+		if input.Feed == "following" {
+			// canView の公開範囲判定を SQL に寄せる（フォロー先の見えない投稿を読まない）。
+			// ranked ではなく SQL の条件が canView && matchesFeed と一致するので、先頭 51 件で足りる
+			friends := make([]string, 0, len(viewer.Friends))
+			friendsOrFoF := make([]string, 0, len(viewer.Friends)+len(viewer.FriendsOfFriends))
+			for id := range viewer.Friends {
+				friends = append(friends, id)
+				friendsOrFoF = append(friendsOrFoF, id)
+			}
+			for id := range viewer.FriendsOfFriends {
+				friendsOrFoF = append(friendsOrFoF, id)
+			}
+			conditions += ` AND (p.visibility = 'public'
+    OR (p.visibility = 'friends' AND p.author_id = ANY($6::text[]))
+    OR (p.visibility = 'friends_of_friends' AND p.author_id = ANY($7::text[])))`
+			args = append(args, friends, friendsOrFoF)
+			limit = " LIMIT 51"
+		}
 		posts, err := selectPostsWithAuthor(ctx, h.DB, conditions+`
    ORDER BY p.posted_at DESC, p.id DESC`+limit, args...)
 		if err != nil {
