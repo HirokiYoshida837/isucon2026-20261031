@@ -48,6 +48,11 @@ func (c *verifiedSigCache) reset() {
 	c.items = map[verifiedSigKey]struct{}{}
 }
 
+// 検証に失敗した (image_id, exp, sig) も覚える。署名は (持ち主の鍵, image_id, exp) だけで決まり鍵は変わらないので、
+// 一度失敗した組は永久に失敗する。ベンチは同じ不正 URL を 1 IP あたり約 2,800 回叩く（asia1 の画像リクエストの 80% が
+// この 403）ので、2 回目以降は DB の生存確認と HMAC 1000 回を飛ばして 403 を返す。guard の検知（abuse フラグ）はそのまま。
+var rejectedImageSigs = &verifiedSigCache{items: map[verifiedSigKey]struct{}{}}
+
 // 発行した署名付き URL のキャッシュ。(鍵, image_id) ごとに最後に発行した URL と exp を持ち、signedURLReuse の間は使い回す。
 // 上限を超えたら全消去する。
 const signedURLMaxEntries = 200000
