@@ -106,9 +106,7 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
    AND (p.visibility = 'public'
     OR (p.visibility = 'friends' AND p.author_id = ANY($5::text[]))
     OR (p.visibility = 'friends_of_friends' AND (p.author_id = ANY($5::text[]) OR EXISTS(
-         SELECT 1 FROM friendships f
-         WHERE (f.user_low_id = p.author_id AND f.user_high_id = ANY($5::text[]))
-            OR (f.user_high_id = p.author_id AND f.user_low_id = ANY($5::text[]))))))`
+         SELECT 1 FROM friend_edges f WHERE f.user_id = p.author_id AND f.friend_id = ANY($5::text[])))))`
 			args = append(args, friends)
 			limit = " LIMIT 51"
 		}
@@ -181,24 +179,20 @@ func recommendationScores(ctx context.Context, db sqlx.QueryerContext, viewer vi
 		postIDs = append(postIDs, post.ID)
 	}
 
-	query, args, err := sqlx.In(`SELECT user_low_id, user_high_id FROM friendships WHERE user_low_id IN (?) OR user_high_id IN (?)`, authorIDs, authorIDs)
-	if err != nil {
-		return nil, err
+	// friend_edges は両方向の行なので、著者 a の友達 f ごとに connections[a] += MutualFriends[f]
+	var edges []struct {
+		UserID   string `db:"user_id"`
+		FriendID string `db:"friend_id"`
 	}
-	var friendships []struct {
-		UserLowID  string `db:"user_low_id"`
-		UserHighID string `db:"user_high_id"`
-	}
-	if err := sqlx.SelectContext(ctx, db, &friendships, sqlx.Rebind(sqlx.DOLLAR, query), args...); err != nil {
+	if err := sqlx.SelectContext(ctx, db, &edges, `SELECT user_id, friend_id FROM friend_edges WHERE user_id = ANY($1::text[])`, authorIDs); err != nil {
 		return nil, err
 	}
 	connections := map[string]int64{}
-	for _, friendship := range friendships {
-		connections[friendship.UserLowID] += int64(viewer.MutualFriends[friendship.UserHighID])
-		connections[friendship.UserHighID] += int64(viewer.MutualFriends[friendship.UserLowID])
+	for _, edge := range edges {
+		connections[edge.UserID] += int64(viewer.MutualFriends[edge.FriendID])
 	}
 
-	query, args, err = sqlx.In(`
+	query, args, err := sqlx.In(`
   SELECT r.post_id, r.reactor_id AS user_id FROM realmojis r
   JOIN users u ON u.id = r.reactor_id AND u.status = 'active'
   WHERE r.post_id IN (?) AND r.replaced_at IS NULL AND r.deleted_at IS NULL
