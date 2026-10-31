@@ -25,6 +25,15 @@ func getFriendRequest(ctx context.Context, db sqlx.QueryerContext, id string) (F
 	return request, err
 }
 
+// 2 人のユーザー間の操作（friend-request / follow / block / realmoji / comment）を直列化するロック。
+// users の行を FOR NO KEY UPDATE で握ると、相手が有名人のとき全員がその 1 行に並ぶので、
+// 「ペア」単位の advisory lock（トランザクション終了で解放）に置き換えている。
+// 同じ 2 人の間の操作は今まで通り排他され、別のペアは並行して進む。
+const pairLockCTE = `WITH pair_lock AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended(least($1::text, $2::text) || '|' || greatest($1::text, $2::text), 0))
+  )
+  `
+
 func beginRelationshipTx(ctx context.Context, db *sqlx.DB, actor, target string) (*sqlx.Tx, error) {
 	if actor == target || target == "" {
 		return nil, NewAPIError(http.StatusBadRequest, "invalid_relationship")
@@ -34,7 +43,7 @@ func beginRelationshipTx(ctx context.Context, db *sqlx.DB, actor, target string)
 		return nil, err
 	}
 	var lockedIDs []string
-	if err := tx.SelectContext(ctx, &lockedIDs, `SELECT id FROM users WHERE id IN ($1, $2) AND status='active' ORDER BY id FOR NO KEY UPDATE`, actor, target); err != nil {
+	if err := tx.SelectContext(ctx, &lockedIDs, pairLockCTE+`SELECT u.id FROM users u, pair_lock WHERE u.id IN ($1, $2) AND u.status='active' ORDER BY u.id`, actor, target); err != nil {
 		tx.Rollback()
 		return nil, err
 	}

@@ -50,7 +50,7 @@ func createCommentHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		defer tx.Rollback()
 		var lockedIDs []string
-		if err := tx.SelectContext(ctx, &lockedIDs, `SELECT id FROM users WHERE id IN ($1, $2) ORDER BY id FOR NO KEY UPDATE`, actor, post.AuthorID); err != nil {
+		if err := tx.SelectContext(ctx, &lockedIDs, pairLockCTE+`SELECT u.id FROM users u, pair_lock WHERE u.id IN ($1, $2) ORDER BY u.id`, actor, post.AuthorID); err != nil {
 			return err
 		}
 		if len(lockedIDs) == 0 || (actor != post.AuthorID && len(lockedIDs) != 2) {
