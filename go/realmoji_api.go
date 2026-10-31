@@ -98,6 +98,9 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := tx.GetContext(ctx, &reaction, `
    WITH image AS (
      INSERT INTO image_objects(id,owner_user_id,data,media_type) VALUES($4,$3,$6,'image/jpeg')
+     RETURNING id,created_at,owner_user_id
+   ), image_key AS (
+     INSERT INTO image_keys(id,created_at,owner_user_id) SELECT id,created_at,owner_user_id FROM image
    ), r AS (
      INSERT INTO realmojis(id,post_id,reactor_id,image_id,reaction_type,created_at) VALUES($1,$2,$3,$4,$5,clock_timestamp())
      RETURNING id,post_id,reactor_id,image_id,reaction_type,created_at,replaced_at,deleted_at
