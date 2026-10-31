@@ -17,6 +17,7 @@ type initializeResponse struct {
 
 func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
+		stopImageURLWarmUp() // ベンチ開始。ウォームアップの CPU を渡す（入れた分は残す）
 		cmd := exec.Command("../sql/init.sh")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
@@ -25,8 +26,8 @@ func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		guardReset()
 		imageObjectCache.reset()
-		verifiedImageSigs.reset()
-		issuedImageURLs.reset()
+		// verifiedImageSigs・issuedImageURLs は消さない。署名は (持ち主の鍵, image_id, exp) だけで決まり、
+		// 持ち主・削除は毎回 DB で見る。起動時のウォームアップの結果を残すため。
 		h.Notifications.reset()
 		sessionCache.reset()
 

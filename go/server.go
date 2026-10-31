@@ -70,6 +70,7 @@ func NewServer(config *Config) *echo.Echo {
 		panic("failed to ping database: " + err.Error())
 	}
 	warmUpDB(db, dbMaxConns)
+	startImageURLWarmUp(db, config.Region)
 
 	handlerContext := &HandlerContext{
 		DB:            db,
