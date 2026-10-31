@@ -127,10 +127,8 @@ func loadViewerContext(ctx context.Context, db sqlx.QueryerContext, viewerID str
   SELECT `+strings.Join(userColumns, ", ")+`,
     EXISTS(
       SELECT 1 FROM posts p
-      JOIN posting_windows posted ON posted.id = p.posting_window_id
       JOIN posting_windows current ON current.region = u.region AND current.ended_at IS NULL
-                                  AND current.local_date = posted.local_date
-      WHERE p.author_id = u.id AND p.deleted_at IS NULL
+      WHERE p.author_id = u.id AND p.local_date = current.local_date AND p.deleted_at IS NULL
     ) AS has_posted_today,
     COALESCE((
       SELECT string_agg(CASE WHEN blocker_id = $1 THEN blocked_id ELSE blocker_id END, ',')
@@ -227,10 +225,8 @@ func getPostForViewer(ctx context.Context, db sqlx.QueryerContext, viewerID, pos
   LEFT JOIN LATERAL (
     SELECT v.id, EXISTS(
       SELECT 1 FROM posts vp
-      JOIN posting_windows posted ON posted.id = vp.posting_window_id
       JOIN posting_windows current ON current.region = v.region AND current.ended_at IS NULL
-                                  AND current.local_date = posted.local_date
-      WHERE vp.author_id = v.id AND vp.deleted_at IS NULL
+      WHERE vp.author_id = v.id AND vp.local_date = current.local_date AND vp.deleted_at IS NULL
     ) AS has_posted_today
     FROM users v WHERE v.id = $2 AND v.status = 'active'
   ) v ON true

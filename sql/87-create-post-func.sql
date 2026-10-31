@@ -14,6 +14,7 @@ DECLARE
   w_id text;
   w_starts timestamptz;
   w_deadline timestamptz;
+  w_date date;
   n_active bigint;
   n_deleted bigint;
   v_posted timestamptz;
@@ -25,13 +26,13 @@ BEGIN
   END IF;
   -- 期間の切り替えと重なると空になるので 1 回だけ取り直す（新しいスナップショットで次の期間が見える）
   FOR i IN 1..2 LOOP
-    SELECT w.id, w.starts_at, w.on_time_deadline, counts.active, counts.deleted
-      INTO w_id, w_starts, w_deadline, n_active, n_deleted
+    SELECT w.id, w.local_date, w.starts_at, w.on_time_deadline, counts.active, counts.deleted
+      INTO w_id, w_date, w_starts, w_deadline, n_active, n_deleted
       FROM posting_windows w CROSS JOIN LATERAL (
         SELECT count(*) FILTER (WHERE p.deleted_at IS NULL) AS active,
                count(*) FILTER (WHERE p.deleted_at IS NOT NULL) AS deleted
-        FROM posts p JOIN posting_windows posted ON posted.id = p.posting_window_id
-        WHERE p.author_id = p_user_id AND posted.local_date = w.local_date
+        FROM posts p
+        WHERE p.author_id = p_user_id AND p.local_date = w.local_date
       ) counts
      WHERE w.region = u.region AND w.ended_at IS NULL FOR SHARE OF w;
     EXIT WHEN FOUND;
@@ -44,9 +45,9 @@ BEGIN
   INSERT INTO image_objects (id, owner_user_id, data, media_type, created_at) VALUES (p_image_id, p_user_id, p_data, 'image/jpeg', v_posted);
   INSERT INTO image_keys (id, created_at, owner_user_id) VALUES (p_image_id, v_posted, p_user_id);
   INSERT INTO posts (id, author_id, posting_window_id, image_id, caption, visibility,
-                     location_kind, latitude, longitude, locality, posted_at)
+                     location_kind, latitude, longitude, locality, posted_at, local_date)
   VALUES (p_post_id, p_user_id, w_id, p_image_id, p_caption, p_visibility,
-          p_location_kind, p_latitude, p_longitude, p_locality, v_posted);
+          p_location_kind, p_latitude, p_longitude, p_locality, v_posted, w_date);
   RETURN QUERY SELECT 0, u.id::text, u.username::text, u.secret_key_hash::text, u.display_name::text, u.bio::text,
     u.profile_image_id::text, u.region::text, u.account_type::text, u.status::text, w_id, w_deadline, v_posted;
 END $$;
