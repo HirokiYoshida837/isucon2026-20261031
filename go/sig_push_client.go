@@ -58,12 +58,13 @@ func startSigPusher(db *sqlx.DB, config *Config) {
 }
 
 func (p *sigPusher) run() {
-	for {
+	// 失敗しても 5 秒ごとに全件を読み直さない（#205）。5s → 30s → 60s
+	for wait := sigPushInterval; ; wait = min(max(wait*6, 30*time.Second), 60*time.Second) {
 		if err := p.load(); err == nil {
 			break
 		} else {
 			log.Printf("sig push: load failed: %v", err)
-			time.Sleep(sigPushInterval)
+			time.Sleep(wait)
 		}
 	}
 	log.Printf("sig push: %d images (shard %d) -> %s", len(p.items), p.shard, p.target)
@@ -126,27 +127,57 @@ func (p *sigPusher) load() error {
 		seen[id] = struct{}{}
 		p.items = append(p.items, sigPushItem{key: key, id: id})
 	}
-	for _, q := range []string{
-		`SELECT p.image_id, u.secret_key_hash FROM posts p JOIN users u ON u.id = p.author_id
-		 WHERE p.deleted_at IS NULL AND u.status = 'active' ORDER BY p.posted_at DESC`,
-		`SELECT u.profile_image_id, u.secret_key_hash FROM users u WHERE u.profile_image_id IS NOT NULL AND u.status = 'active'`,
-		`SELECT r.image_id, u.secret_key_hash FROM realmojis r JOIN users u ON u.id = r.user_id WHERE u.status = 'active'`,
-	} {
-		rows, err := p.db.QueryxContext(ctx, q)
+	p.items = p.items[:0]
+	// posts 全件を posted_at で並べ替える SELECT（asia2 で 5〜30 秒・ディスク sort）をやめ、投稿期間ごとに index で引く（#178 / #197 と同じ）
+	var users []struct {
+		ID             string  `db:"id"`
+		SecretKeyHash  string  `db:"secret_key_hash"`
+		ProfileImageID *string `db:"profile_image_id"`
+	}
+	if err := p.db.SelectContext(ctx, &users, `SELECT id, secret_key_hash, profile_image_id FROM users WHERE status = 'active'`); err != nil {
+		return err
+	}
+	hashes := make(map[string]string, len(users))
+	for _, u := range users {
+		hashes[u.ID] = u.SecretKeyHash
+	}
+	scan := func(q string, args ...any) error {
+		rows, err := p.db.QueryxContext(ctx, q, args...)
 		if err != nil {
 			return err
 		}
+		defer rows.Close()
 		for rows.Next() {
-			var id, hash string
-			if err := rows.Scan(&id, &hash); err != nil {
-				rows.Close()
+			var id, userID string
+			if err := rows.Scan(&id, &userID); err != nil {
 				return err
 			}
-			add(id, hash)
+			if hash, ok := hashes[userID]; ok {
+				add(id, hash)
+			}
 		}
-		rows.Close()
+		return rows.Err()
 	}
-	return nil
+	var windows []string
+	if err := p.db.SelectContext(ctx, &windows, `SELECT id FROM posting_windows ORDER BY local_date DESC, starts_at DESC`); err != nil {
+		return err
+	}
+	for _, windowID := range windows {
+		if len(p.items) >= p.maxItems {
+			break
+		}
+		// idx_posts_posting_window_id_posted_at_id（WHERE deleted_at IS NULL）で引く
+		if err := scan(`SELECT image_id, author_id FROM posts WHERE posting_window_id = $1 AND deleted_at IS NULL ORDER BY posted_at DESC`, windowID); err != nil {
+			return err
+		}
+	}
+	for _, u := range users {
+		if u.ProfileImageID != nil {
+			add(*u.ProfileImageID, u.SecretKeyHash)
+		}
+	}
+	// 列は reactor_id（r.user_id で起動以来ずっと失敗していた。#205）
+	return scan(`SELECT image_id, reactor_id FROM realmojis`)
 }
 
 func (p *sigPusher) status() map[int64]int {
