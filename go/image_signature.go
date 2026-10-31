@@ -60,11 +60,8 @@ func signedImageURL(user User, imageID string) string {
 }
 
 func buildSignedURL(imageID string, exp int64, sig []byte) string {
-	query := url.Values{
-		"exp": {strconv.FormatInt(exp, 10)},
-		"sig": {base64.RawURLEncoding.EncodeToString(sig)},
-	}
-	return "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
+	// url.Values.Encode と同じ出力（キーは exp < sig の順、exp は数字、sig は base64url でエスケープ対象を含まない）
+	return "/api/images/" + url.PathEscape(imageID) + "?exp=" + strconv.FormatInt(exp, 10) + "&sig=" + base64.RawURLEncoding.EncodeToString(sig)
 }
 
 // 署名を URL にしてキャッシュに入れる。自分が発行した署名は検証済みとして登録する（鍵は画像の持ち主のもの）。
