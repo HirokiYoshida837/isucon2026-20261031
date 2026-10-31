@@ -10,3 +10,16 @@ CREATE INDEX IF NOT EXISTS idx_block_relations_blocked_id ON block_relations (bl
 CREATE INDEX IF NOT EXISTS idx_posts_posting_window_id_posted_at_id ON posts (posting_window_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
 -- register の LOCK TABLE users を外すための一意制約（go/user_api.go の ON CONFLICT (username) が使う）
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (username);
+-- 画像の生存確認（go/image_api.go）・認証（go/session.go）・友達申請・ユーザー検索・自分の投稿の index（#72 #74）
+-- DB にはすでに貼ってある（PR #11 が yochi/feed-indexes 側に入って main に届いていなかった分と、手で貼った posts(author_id, posted_at)）
+CREATE INDEX IF NOT EXISTS idx_realmojis_image_id_reactor_id ON realmojis (image_id, reactor_id) WHERE replaced_at IS NULL AND deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_image_id_author_id ON posts (image_id, author_id) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_posts_author_id_posting_window_id ON posts (author_id, posting_window_id);
+CREATE INDEX IF NOT EXISTS idx_posts_author_id_posted_at_id ON posts (author_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_users_username_id ON users (username, id);
+CREATE INDEX IF NOT EXISTS idx_login_sessions_token_hash ON login_sessions (token_hash) WHERE active = true;
+CREATE INDEX IF NOT EXISTS idx_login_sessions_user_id ON login_sessions (user_id) WHERE active = true;
+CREATE INDEX IF NOT EXISTS idx_friend_requests_requester_id_recipient_id ON friend_requests (requester_id, recipient_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_friend_requests_recipient_id_requester_id ON friend_requests (recipient_id, requester_id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS idx_follows_followee_id_follower_id ON follows (followee_id, follower_id);
+CREATE INDEX IF NOT EXISTS idx_posting_windows_local_date ON posting_windows (local_date);
