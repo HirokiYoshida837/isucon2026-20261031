@@ -34,6 +34,8 @@ func (c *Config) DatabaseDSN() string {
 		User:   url.UserPassword(c.DBUser, c.DBPassword),
 		Host:   net.JoinHostPort(c.DBHost, c.DBPort),
 		Path:   "/" + c.DBName,
+		// TLS を使わない。asia2 の PostgreSQL は ssl=on で、pgx のデフォルト（prefer）だと TLS になり接続確立が 3 往復増える
+		RawQuery: "sslmode=disable",
 	}
 	return u.String()
 }
