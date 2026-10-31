@@ -2,7 +2,6 @@ package isureal
 
 import (
 	"database/sql"
-	"errors"
 	"net/http"
 	"time"
 
@@ -37,44 +36,27 @@ func createCommentHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
+		// ペアロック・存在と状態の判定・コメント可否・INSERT を 1 往復で行う（sql/90-interaction-func.sql、#167）
+		var res struct {
+			Code int `db:"code"`
+			CommentWithAuthor
+		}
+		if err := h.DB.GetContext(ctx, &res, `
+   SELECT code, c_id AS id, c_post_id AS post_id, c_author_id AS author_id, c_body AS body, c_created_at AS created_at, c_deleted_at AS deleted_at,
+          `+funcUserColumnsAs("u_", "author")+`
+   FROM create_comment($1, $2, $3, $4)
+  `, actor, input.PostID, uuid.NewString(), input.Body); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var lock postPairLock
-		err = tx.GetContext(ctx, &lock, postPairLockSQL, actor, input.PostID)
-		if errors.Is(err, sql.ErrNoRows) {
-			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
-		}
-		if err != nil {
-			return err
-		}
-		if lock.UserCount == 0 || (actor != lock.AuthorID && lock.UserCount != 2) {
+		switch res.Code {
+		case 0:
+		case 500:
 			return sql.ErrNoRows
-		}
-		allowed, err := canComment(ctx, tx, actor, input.PostID)
-		if err != nil {
-			return err
-		}
-		if !allowed {
+		default:
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
-		var comment CommentWithAuthor
-		if err := tx.GetContext(ctx, &comment, `
-   WITH c AS (
-     INSERT INTO comments(id,post_id,author_id,body,created_at) VALUES($1,$2,$3,$4,clock_timestamp())
-     RETURNING id,post_id,author_id,body,created_at,deleted_at
-   )
-   SELECT c.id,c.post_id,c.author_id,c.body,c.created_at,c.deleted_at, `+userColumnsAs("u", "author")+`
-   FROM c JOIN users u ON u.id = c.author_id AND u.status = 'active'
-  `, uuid.NewString(), input.PostID, actor, input.Body); err != nil {
-			return err
-		}
+		comment := res.CommentWithAuthor
 		if err := comment.Author.setImageKey(); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
 			return err
 		}
 		return c.JSON(http.StatusCreated, newCommentResponse(comment.Comment, comment.Author))
