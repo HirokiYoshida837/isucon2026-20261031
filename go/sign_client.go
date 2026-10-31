@@ -39,10 +39,10 @@ var (
 	signFails       atomic.Int32
 	signPausedUntil atomic.Int64
 
-	// 頼まずに asia1 自身で計算する割合（%）。ベンチ中は asia1 の CPU が足りないので 0、
-	// 走行の準備中の先読みは asia1 が暇なので 3 台で均等（33）。
-	signLocalPercent     int
-	prefetchLocalPercent = 33
+	// 頼まずに asia1 自身で計算する割合（%）。残りは europe1 / america1 に等分（既定は asia 10 / europe 45 / america 45）。
+	// ベンチ中は asia1 の CPU が足りないので少なめにする。env で変えられる。
+	signLocalPercent     = 10
+	prefetchLocalPercent = 10
 )
 
 func envPercent(name string, def int) int {
