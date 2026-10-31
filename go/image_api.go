@@ -14,6 +14,24 @@ import (
 	"github.com/labstack/echo/v5"
 )
 
+// 画像の生存確認（持ち主が active で、プロフィール・未削除の投稿・有効なリアクションのどれかで使われている）
+const imageAliveSQL = ` (
+     COALESCE(u.profile_image_id = i.id, false)
+     OR EXISTS (
+       SELECT 1 FROM posts p
+       WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
+     )
+     OR EXISTS (
+       SELECT 1 FROM realmojis r
+       JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
+       JOIN users author ON author.id = p.author_id AND author.status = 'active'
+       WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
+     )
+   ) AS alive, i.created_at
+   FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
+   WHERE i.id = $1
+`
+
 type getImageRequest struct {
 	ImageID string `param:"imageId" json:"-"`
 	Exp     string `query:"exp" json:"-"`
@@ -60,25 +78,16 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 			MediaType     *string   `db:"media_type"`
 			Data          []byte    `db:"data"`
 		}
-		err = h.DB.GetContext(ctx, &object, `
+		// 本体を取らないときは image_objects を参照しない文にする。
+		// 同じ文で $2=false にすると generic plan に全パーティションの Append が残り、毎回 410µs → 87µs かかる
+		if withData {
+			err = h.DB.GetContext(ctx, &object, `
    SELECT u.secret_key_hash,
-   (SELECT media_type FROM image_objects WHERE $2::boolean AND id = i.id AND created_at = i.created_at) AS media_type,
-   (SELECT data FROM image_objects WHERE $2::boolean AND id = i.id AND created_at = i.created_at) AS data, (
-     COALESCE(u.profile_image_id = i.id, false)
-     OR EXISTS (
-       SELECT 1 FROM posts p
-       WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
-     )
-     OR EXISTS (
-       SELECT 1 FROM realmojis r
-       JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
-       JOIN users author ON author.id = p.author_id AND author.status = 'active'
-       WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
-     )
-   ) AS alive, i.created_at
-   FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
-   WHERE i.id = $1
-  `, input.ImageID, withData)
+   (SELECT media_type FROM image_objects WHERE id = i.id AND created_at = i.created_at) AS media_type,
+   (SELECT data FROM image_objects WHERE id = i.id AND created_at = i.created_at) AS data,`+imageAliveSQL, input.ImageID)
+		} else {
+			err = h.DB.GetContext(ctx, &object, `SELECT u.secret_key_hash,`+imageAliveSQL, input.ImageID)
+		}
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
