@@ -21,11 +21,7 @@ func getNotificationsHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		ctx := c.Request().Context()
 		session := GetSession(c)
-		var connectedAt time.Time
-		if err := h.DB.GetContext(ctx, &connectedAt, `SELECT clock_timestamp()`); err != nil {
-			return err
-		}
-		waiter := h.Notifications.add(session.UserID, connectedAt)
+		waiter := h.Notifications.add(session.UserID, h.Notifications.now())
 		defer h.Notifications.remove(waiter)
 
 		response := c.Response()
