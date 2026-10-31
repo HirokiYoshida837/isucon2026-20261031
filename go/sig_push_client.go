@@ -11,9 +11,11 @@ import (
 	"runtime"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/jmoiron/sqlx"
+	"github.com/labstack/echo/v5"
 )
 
 // europe1 / america1 が、asia1 の画像署名を先回りで計算して渡す（CPU が暇で、SHA 拡張があり 1 署名 約 140µs）。
@@ -21,8 +23,47 @@ import (
 // 分担: image_id のハッシュで 2 分割（europe = 0、america = 1）。片方が止まっても asia1 は残りを自前で計算する。
 // 流れ: 5 秒ごとに「現在」と「次」のバケット（sig_bucket.go）について、asia1 に無ければ計算しながら送る。
 // 帯域は ISUREAL_SIG_PUSH_BPS（既定 2MB/s）に絞る（eu/am ↔ asia のリンクは DB 通信と共用）。
-const sigPushChunk = 8192
+const sigPushChunk = 2048 // 負荷を検知してから止まるまでの遅れを 0.3 秒以内に抑える
 const sigPushInterval = 5 * time.Second
+
+// 負荷中は署名の計算を止める（#214: ベンチ中に eu/am の 2 コアを計算が使い切り、america の成長が止まった）。
+// 1 秒に sigPushBusyRPS 件以上のリクエストが来たら、その後 sigPushBusyHold の間は「負荷中」。
+// 現在と次のバケットは負荷の前に作り終えているので、走行中に計算が止まっても asia1 は困らない（無い分は自前で計算する）。
+// 暇なときでも 1 コアはリクエストに残す（workers = GOMAXPROCS − 1）。
+const sigPushBusyRPS = 2
+const sigPushBusyHold = 3 * time.Second
+
+var sigPushRequests atomic.Int64
+var sigPushBusyUntil atomic.Int64 // UnixNano
+
+// 全リクエストを数える（負荷の検知用）
+func sigPushLoadMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c *echo.Context) error {
+		sigPushRequests.Add(1)
+		return next(c)
+	}
+}
+
+func sigPushBusy() bool { return time.Now().UnixNano() < sigPushBusyUntil.Load() }
+
+func sigPushWatchLoad() {
+	prev := sigPushRequests.Load()
+	for {
+		time.Sleep(time.Second)
+		cur := sigPushRequests.Load()
+		if cur-prev >= sigPushBusyRPS {
+			sigPushBusyUntil.Store(time.Now().Add(sigPushBusyHold).UnixNano())
+		}
+		prev = cur
+	}
+}
+
+// 負荷中は待つ
+func sigPushWaitIdle() {
+	for sigPushBusy() {
+		time.Sleep(200 * time.Millisecond)
+	}
+}
 
 type sigPushItem struct {
 	key []byte
@@ -54,6 +95,7 @@ func startSigPusher(db *sqlx.DB, config *Config) {
 		client:   &http.Client{Timeout: 120 * time.Second},
 		computed: map[int64][][32]byte{}, done: map[int64][]bool{}, pushedOK: map[int64]bool{},
 	}
+	go sigPushWatchLoad()
 	go p.run()
 }
 
@@ -216,9 +258,10 @@ func (p *sigPusher) computeChunk(b int64, ci int) {
 	if p.done[b][ci] {
 		return
 	}
+	sigPushWaitIdle()
 	exp := sigBucketExp(b)
 	start, end := ci*sigPushChunk, min((ci+1)*sigPushChunk, len(p.items))
-	workers := runtime.GOMAXPROCS(0)
+	workers := max(1, runtime.GOMAXPROCS(0)-1)
 	per := (end - start + workers - 1) / workers
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
