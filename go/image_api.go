@@ -46,6 +46,11 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		// 本体がキャッシュに無く署名が検証済みのときだけ、本体も同じ問い合わせで取る（DB 往復を 1 回減らす）。
 		// 未検証の署名で本体を取らないのは、不正な署名の要求で大きな本体を引かないため。
 		sigKey := newVerifiedSigKey(input.ImageID, exp, sig)
+		// 以前に検証に失敗した署名は、DB も HMAC も使わずに同じ 403 を返す（結果は変わらない）
+		if rejectedImageSigs.has(sigKey) {
+			c.Set("abuse", "invalid_signature")
+			return NewAPIError(http.StatusForbidden, "image_forbidden")
+		}
 		entry, cached := imageObjectCache.get(input.ImageID)
 		withData := !cached && verifiedImageSigs.has(sigKey)
 		var object struct {
@@ -86,6 +91,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 				return err
 			}
 			if !hmac.Equal(sig, imageSignature(key, input.ImageID, exp)) {
+				rejectedImageSigs.add(sigKey)
 				c.Set("abuse", "invalid_signature")
 				return NewAPIError(http.StatusForbidden, "image_forbidden")
 			}
