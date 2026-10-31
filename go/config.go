@@ -30,7 +30,7 @@ func ConfigFromEnv() *Config {
 		DBName:     envOrDefault("ISUREAL_DB_NAME", "isureal"),
 		LogLevel:   envOrDefault("ISUREAL_LOG_LEVEL", "info"),
 
-		NotificationPollInterval: envDuration("ISUREAL_NOTIFICATION_POLL_INTERVAL", time.Second, 10*time.Millisecond),
+		NotificationPollInterval: envDuration("ISUREAL_NOTIFICATION_POLL_INTERVAL", 100*time.Millisecond, 10*time.Millisecond),
 	}
 }
 

@@ -9,7 +9,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/jmoiron/sqlx"
 )
 
@@ -17,8 +16,6 @@ const (
 	notificationRevalidateEvery = 5 * time.Second // 接続中ユーザーの status / region を見直す間隔。ポーリング間隔を縮めても 5 秒のまま
 	notificationClockSamples    = 5               // DB 時刻のずれを測る回数。往復が最短だったものを採る
 	notificationClockSyncEach   = 10 * time.Second
-
-	postingWindowChannel = "posting_window_open" // 投稿期間の開始時に管理 API が pg_notify する（payload はリージョン）
 )
 
 // notificationWaiter は SSE で通知を待っている 1 接続
@@ -29,14 +26,12 @@ type notificationWaiter struct {
 	ch            chan *getNotificationsResponse // nil を受け取ったら接続を閉じる
 }
 
-// NotificationHub は接続中の SSE に通知を配る。
-// 投稿期間の開始は LISTEN/NOTIFY で受け、間隔の長いポーリングは取りこぼし対策の保険として残す。
+// NotificationHub はサーバーで 1 本だけ DB をポーリングし、接続中の SSE に通知を配る。
+// 接続ごとに 500ms ごと 1 クエリ投げていたのをやめ、投稿期間の変化を 1 クエリで見張る。
 type NotificationHub struct {
 	db     *sqlx.DB
 	region string
 
-	connConfig     *pgx.ConnConfig // LISTEN 専用接続用
-	kickCh         chan struct{}
 	pollInterval   time.Duration
 	revalidateEach int // ポーリング何回ごとに revalidate するか
 	mu             sync.Mutex
@@ -46,14 +41,12 @@ type NotificationHub struct {
 	clockOffset atomic.Int64 // DB 時刻 - アプリ時刻（ns）。接続ごとに clock_timestamp() を DB へ聞かないための補正
 }
 
-func NewNotificationHub(db *sqlx.DB, connConfig *pgx.ConnConfig, region string, pollInterval time.Duration) *NotificationHub {
+func NewNotificationHub(db *sqlx.DB, region string, pollInterval time.Duration) *NotificationHub {
 	each := int(notificationRevalidateEvery / pollInterval)
 	if each < 1 {
 		each = 1
 	}
-	listenConfig := connConfig.Copy()
-	listenConfig.Tracer = nil
-	h := &NotificationHub{db: db, connConfig: listenConfig, kickCh: make(chan struct{}, 1), region: region, pollInterval: pollInterval, revalidateEach: each, waiters: make(map[*notificationWaiter]struct{})}
+	h := &NotificationHub{db: db, region: region, pollInterval: pollInterval, revalidateEach: each, waiters: make(map[*notificationWaiter]struct{})}
 	if err := h.syncClock(context.Background()); err != nil {
 		log.Printf("notification hub: clock sync: %v", err)
 	}
@@ -106,65 +99,17 @@ func (h *NotificationHub) reset() {
 		w.checkedWindow = ""
 	}
 	h.mu.Unlock()
-	h.kick()
-}
-
-// kick は次のポーリングを待たずに poll させる
-func (h *NotificationHub) kick() {
-	select {
-	case h.kickCh <- struct{}{}:
-	default:
-	}
-}
-
-// listen は NOTIFY を待って kick する。切れたら張り直し、張り直したら取りこぼし分を探すために kick する
-func (h *NotificationHub) listen(ctx context.Context) {
-	for ctx.Err() == nil {
-		if err := h.listenOnce(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("notification hub: listen: %v", err)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-func (h *NotificationHub) listenOnce(ctx context.Context) error {
-	conn, err := pgx.ConnectConfig(ctx, h.connConfig)
-	if err != nil {
-		return err
-	}
-	defer conn.Close(context.Background())
-	if _, err := conn.Exec(ctx, "LISTEN "+postingWindowChannel); err != nil {
-		return err
-	}
-	h.kick()
-	for {
-		n, err := conn.WaitForNotification(ctx)
-		if err != nil {
-			return err
-		}
-		if n.Payload == h.region {
-			h.kick()
-		}
-	}
 }
 
 func (h *NotificationHub) Run(ctx context.Context) {
-	go h.listen(ctx)
 	ticker := time.NewTicker(h.pollInterval)
 	defer ticker.Stop()
 	lastSync := time.Now()
 	for {
-		tick := false
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			tick = true
-		case <-h.kickCh:
 		}
 		if time.Since(lastSync) >= notificationClockSyncEach {
 			lastSync = time.Now()
@@ -172,13 +117,13 @@ func (h *NotificationHub) Run(ctx context.Context) {
 				log.Printf("notification hub: clock sync: %v", err)
 			}
 		}
-		if err := h.poll(ctx, tick); err != nil && ctx.Err() == nil {
+		if err := h.poll(ctx); err != nil && ctx.Err() == nil {
 			log.Printf("notification hub: %v", err)
 		}
 	}
 }
 
-func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
+func (h *NotificationHub) poll(ctx context.Context) error {
 	h.mu.Lock()
 	n := len(h.waiters)
 	h.mu.Unlock()
@@ -250,9 +195,6 @@ func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
 	}
 
 	// 接続中ユーザーの退会・リージョン変更を定期的に見直す（元の実装は毎ポーリングで見ていた）
-	if !tick {
-		return nil
-	}
 	h.ticks++
 	if h.ticks%h.revalidateEach == 0 {
 		return h.revalidate(ctx)
