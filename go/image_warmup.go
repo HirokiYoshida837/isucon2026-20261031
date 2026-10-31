@@ -43,35 +43,56 @@ func stopImageURLWarmUp() {
 }
 
 func warmUpImageURLs(ctx context.Context, db *sqlx.DB, region string) {
-	// 新しい投稿から順に（表示頻度の高い順）
-	rows, err := db.QueryxContext(ctx, `
-   SELECT p.image_id, u.secret_key_hash
-   FROM posts p JOIN users u ON u.id = p.author_id
-   WHERE u.region = $1 AND u.status = 'active' AND p.deleted_at IS NULL
-   ORDER BY p.posted_at DESC
-   LIMIT $2`, region, warmUpMaxEntries)
-	if err != nil {
+	// posts を全件読んで posted_at で並べ替える 1 本の SELECT（asia2 で 40 秒・ディスク sort・users / posts の AccessShareLock を
+	// 読み切るまで握る）をやめ、投稿期間ごとに index で引く（#178）。1 回の結果が小さいので HMAC の計算中にロックを握らない
+	var users []struct {
+		ID            string `db:"id"`
+		SecretKeyHash string `db:"secret_key_hash"`
+	}
+	if err := db.SelectContext(ctx, &users, `SELECT id, secret_key_hash FROM users WHERE region = $1 AND status = 'active'`, region); err != nil {
 		return
 	}
-	defer rows.Close()
+	keys := make(map[string][]byte, len(users))
+	for _, u := range users {
+		user := User{SecretKeyHash: u.SecretKeyHash}
+		if user.setImageKey() == nil {
+			keys[u.ID] = user.ImageKey
+		}
+	}
+	// 新しい投稿期間から順に（表示頻度の高い順）
+	var windows []string
+	if err := db.SelectContext(ctx, &windows, `SELECT id FROM posting_windows WHERE region = $1 ORDER BY local_date DESC`, region); err != nil {
+		return
+	}
 	batch := make([]sigReq, 0, 512)
 	defer func() { prewarmSigs(batch) }()
-	for rows.Next() {
-		if ctx.Err() != nil {
+	total := 0
+	for _, windowID := range windows {
+		if ctx.Err() != nil || total >= warmUpMaxEntries {
 			return
 		}
-		var imageID, secretKeyHash string
-		if rows.Scan(&imageID, &secretKeyHash) != nil {
+		// idx_posts_posting_window_id_posted_at_id（WHERE deleted_at IS NULL）で引く
+		rows, err := db.QueryxContext(ctx, `SELECT image_id, author_id FROM posts WHERE posting_window_id = $1 AND deleted_at IS NULL ORDER BY posted_at DESC`, windowID)
+		if err != nil {
 			return
 		}
-		user := User{SecretKeyHash: secretKeyHash}
-		if user.setImageKey() != nil {
-			continue
+		for rows.Next() {
+			var imageID, authorID string
+			if rows.Scan(&imageID, &authorID) != nil {
+				rows.Close()
+				return
+			}
+			key, ok := keys[authorID]
+			if !ok {
+				continue
+			}
+			batch = append(batch, sigReq{key: key, imageID: imageID})
+			total++
+			if len(batch) == cap(batch) {
+				prewarmSigs(batch)
+				batch = batch[:0]
+			}
 		}
-		batch = append(batch, sigReq{key: user.ImageKey, imageID: imageID})
-		if len(batch) == cap(batch) {
-			prewarmSigs(batch)
-			batch = batch[:0]
-		}
+		rows.Close()
 	}
 }
