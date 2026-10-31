@@ -61,6 +61,7 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
 3. ポータルでベンチを実行する（Claude in Chrome）
    - ポータルにログイン済みのブラウザを使う（すー: 「すー」プロファイル）。`list_connected_browsers` で確認し、違えば `select_browser`
    - 実行の手順: https://portal.isucon.net/contestant/benchmark_jobs の `Enqueue` を押す。確認ダイアログは出ず、ジョブの詳細ページ（`/contestant/benchmark_jobs/<ID>`）へ移る
+   - 押す前に `pre-check.sh` を流し、全部 ✅ であることを確かめる（imgextract が走っていない・asia2 に 30 秒超の tx と INVALID index が無い・3 台の HEAD が同じ。#210 #211。❌ なら Enqueue しない）
    - 他のベンチが実行中・待機中でないことを確かめてから押す。見分け方: Job List の Status。`RUNNING` が実行中、`FINISHED` が完了（ポータルの絞り込みには他に `PENDING`・`ERRORED`・`CANCELLED` がある。この 3 つは未確認。マニュアルは待機中を `WAITING` と書いている）
    - 30 秒ごとに `get_page_text` で状態を確認し、終わるまで待つ（ベンチ中はデプロイ・再起動をしない）
    - 完了を確認したら、すぐ `bench-end.sh <スコア> <PASS|FAIL>` で完了時刻を記録する
