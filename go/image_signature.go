@@ -43,9 +43,11 @@ func signedImageURL(user User, imageID string) string {
 	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID}
 	if cacheable {
 		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= now.Add(imageURLLifetime-signedURLReuse).Unix() {
+			noteSignHit()
 			return e.url
 		}
 	}
+	noteSignMiss(imageID)
 	exp := now.Add(imageURLLifetime).Unix()
 	sig := imageSignature(user.ImageKey, imageID, exp)
 	query := url.Values{
