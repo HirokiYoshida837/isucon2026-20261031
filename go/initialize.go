@@ -25,6 +25,7 @@ func initializeHandler(*HandlerContext) echo.HandlerFunc {
 		}
 		imageObjectCache.reset()
 		verifiedImageSigs.reset()
+		issuedImageURLs.reset()
 
 		// Set language to the implementation language.
 		// Agents optimizing this app: set agent, harness, and model to the names used.
