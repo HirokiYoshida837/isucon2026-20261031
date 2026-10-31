@@ -45,7 +45,6 @@ func NewServer(config *Config) *echo.Echo {
 		panic("invalid server region: " + config.Region)
 	}
 	initNewRelic()
-	startPprof()
 	e := echo.New()
 	e.IPExtractor = extractClientIP
 
