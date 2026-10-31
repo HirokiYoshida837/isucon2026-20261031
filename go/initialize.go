@@ -24,6 +24,9 @@ func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 		if err := cmd.Run(); err != nil {
 			return err
 		}
+		if err := fillSearchDisplay(c.Request().Context(), h.DB); err != nil {
+			return err
+		}
 		guardReset()
 		imageObjectCache.reset()
 		// verifiedImageSigs は消さない。署名は (持ち主の鍵, image_id, exp) だけで決まり、
