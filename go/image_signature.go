@@ -33,10 +33,25 @@ func imageSignature(key []byte, imageID string, exp int64) []byte {
 }
 
 func signedImageURL(user User, imageID string) string {
-	exp := time.Now().Add(imageURLLifetime).Unix()
+	// exp は分単位に切り下げる（期限が最大 60 秒短くなるだけ）。同じ分の中では同じ URL を返せる。
+	exp := time.Now().Add(imageURLLifetime).Truncate(time.Minute).Unix()
+	cacheable := len(user.ImageKey) == sha256.Size
+	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID, exp: exp}
+	if cacheable {
+		if u, ok := issuedImageURLs.get(cacheKey); ok {
+			return u
+		}
+	}
+	sig := imageSignature(user.ImageKey, imageID, exp)
 	query := url.Values{
 		"exp": {strconv.FormatInt(exp, 10)},
-		"sig": {base64.RawURLEncoding.EncodeToString(imageSignature(user.ImageKey, imageID, exp))},
+		"sig": {base64.RawURLEncoding.EncodeToString(sig)},
 	}
-	return "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
+	u := "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
+	if cacheable {
+		issuedImageURLs.put(cacheKey, u)
+		// 自分が発行した署名は検証済みとして登録する（呼び出し元は画像の持ち主の鍵で署名している）。
+		verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
+	}
+	return u
 }
