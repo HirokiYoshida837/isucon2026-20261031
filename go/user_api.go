@@ -85,29 +85,19 @@ func registerHandler(h *HandlerContext) echo.HandlerFunc {
 		secretKey := uuid.NewString()
 		hash := sha256.Sum256([]byte(secretKey))
 		ctx := c.Request().Context()
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		// ユーザー名が一意である必要があります。
-		if _, err := tx.ExecContext(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
-			return err
-		}
+		// ユーザー名の一意性は users(username) の UNIQUE index（sql/80-add-index.sql）で担保する。
+		// テーブルロックと NOT EXISTS は要らない。重複なら ON CONFLICT で 0 行になる
 		var user User
-		err = tx.GetContext(ctx, &user, `
+		err := h.DB.GetContext(ctx, &user, `
    INSERT INTO users (id, username, secret_key_hash, display_name, region)
-   SELECT $1::varchar, $2::varchar, $3::text, $4::text, $5::text
-   WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = $2::varchar)
+   VALUES ($1::varchar, $2::varchar, $3::text, $4::text, $5::text)
+   ON CONFLICT (username) DO NOTHING
    RETURNING `+strings.Join(userColumns, ", "),
 			uuid.NewString(), input.Username, hex.EncodeToString(hash[:]), input.DisplayName, input.Region)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusConflict, "username_taken")
 		}
 		if err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
 			return err
 		}
 		return c.JSON(http.StatusCreated, registerResponse{SecretKey: secretKey, User: newSessionUserResponse(user)})

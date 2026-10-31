@@ -6,7 +6,7 @@
 ## テーブルと index
 | テーブル | 主キー | その他の index・制約 | 初期化での扱い |
 |---|---|---|---|
-| `users` | `id` | 無し（`username` に index が無い） | 新規を削除、初期分を `initial_users` へ戻す |
+| `users` | `id` | `uq_users_username`（UNIQUE、register の重複判定に使う） | 新規を削除、初期分を `initial_users` へ戻す |
 | `image_objects` | `(id, created_at)` | `created_at` の月別パーティション、`owner_user_id` の FK | 新規を削除。境界より後のパーティションは TRUNCATE |
 | `administrators` | `id` | 無し | 触らない |
 | `login_sessions` | `id` | 無し | TRUNCATE |
