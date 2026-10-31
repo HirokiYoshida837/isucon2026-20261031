@@ -89,7 +89,7 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			}
 			limit = " LIMIT 51"
 		case "following":
-			// フォロー先の取得と canView の公開範囲判定（友達の友達は friendships の EXISTS）を SQL に寄せる。
+			// フォロー先の取得と canView の公開範囲判定（友達の友達は friend_edges の EXISTS）を SQL に寄せる。
 			// ranked ではなく SQL の条件が canView && matchesFeed と一致するので、Go 側の判定は要らず先頭 51 件で足りる
 			friends := make([]string, 0, len(viewer.Friends))
 			for id := range viewer.Friends {
@@ -99,9 +99,7 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
    AND (p.visibility = 'public'
     OR (p.visibility = 'friends' AND p.author_id = ANY($5::text[]))
     OR (p.visibility = 'friends_of_friends' AND (p.author_id = ANY($5::text[]) OR EXISTS(
-         SELECT 1 FROM friendships f
-         WHERE (f.user_low_id = p.author_id AND f.user_high_id = ANY($5::text[]))
-            OR (f.user_high_id = p.author_id AND f.user_low_id = ANY($5::text[]))))))`
+         SELECT 1 FROM friend_edges f WHERE f.user_id = p.author_id AND f.friend_id = ANY($5::text[])))))`
 			args = append(args, friends)
 			limit = " LIMIT 51"
 		}
