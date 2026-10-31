@@ -29,6 +29,8 @@ func ConfigFromEnv() *Config {
 		DBPassword: envOrDefault("ISUREAL_DB_PASSWORD", "isureal"),
 		DBName:     envOrDefault("ISUREAL_DB_NAME", "isureal"),
 		LogLevel:   envOrDefault("ISUREAL_LOG_LEVEL", "info"),
+		// isureal-guard の判定をアプリ内で行う（#79 で field だけ足され、環境変数が読まれていなかった）
+		GuardInApp: os.Getenv("ISUREAL_GUARD_INAPP") == "1",
 
 		NotificationPollInterval: envDuration("ISUREAL_NOTIFICATION_POLL_INTERVAL", time.Second, 10*time.Millisecond),
 	}
