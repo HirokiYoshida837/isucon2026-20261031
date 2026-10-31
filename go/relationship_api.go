@@ -47,28 +47,18 @@ func followHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.UserID)
-		if err != nil {
+		if actor == input.UserID || input.UserID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		var code int
+		if err := h.DB.GetContext(ctx, &code, `SELECT follow_user($1, $2, $3)`, actor, input.UserID, uuid.NewString()); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var conflict bool
-		if err := tx.GetContext(ctx, &conflict, `
-   SELECT account_type <> 'certified_public'
-    OR EXISTS(SELECT 1 FROM block_relations WHERE (blocker_id=$1 AND blocked_id=$2) OR (blocker_id=$2 AND blocked_id=$1))
-    OR EXISTS(SELECT 1 FROM follows WHERE follower_id=$1 AND followee_id=$2)
-   FROM users WHERE id = $2 AND status = 'active'
-  `, actor, input.UserID); err != nil {
-			return err
-		}
-		if conflict {
+		switch code {
+		case 404:
+			return NewAPIError(http.StatusNotFound, "relationship_not_found")
+		case 409:
 			return NewAPIError(http.StatusConflict, "relationship_conflict")
-		}
-		if _, err := tx.ExecContext(ctx, `INSERT INTO follows (id, follower_id, followee_id) VALUES ($1,$2,$3)`, uuid.NewString(), actor, input.UserID); err != nil {
-			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
@@ -86,17 +76,25 @@ func unfollowHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.UserID)
+		if actor == input.UserID || input.UserID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		// 単一行の DELETE は原子的なのでペアロック不要。0 行のときだけ 404 / 409 を判定する。
+		result, err := h.DB.ExecContext(ctx, `DELETE FROM follows WHERE follower_id=$1 AND followee_id=$2 AND (SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active') = 2`, actor, input.UserID)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		result, err := tx.ExecContext(ctx, `DELETE FROM follows WHERE follower_id=$1 AND followee_id=$2`, actor, input.UserID)
-		if err := requireRelationshipChange(result, err, http.StatusConflict, "relationship_conflict"); err != nil {
+		if n, err := result.RowsAffected(); err != nil {
 			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+		} else if n == 0 {
+			var active int
+			if err := h.DB.GetContext(ctx, &active, `SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active'`, actor, input.UserID); err != nil {
+				return err
+			}
+			if active != 2 {
+				return NewAPIError(http.StatusNotFound, "relationship_not_found")
+			}
+			return NewAPIError(http.StatusConflict, "relationship_conflict")
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
