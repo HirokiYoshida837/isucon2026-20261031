@@ -120,31 +120,19 @@ func blockHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.UserID)
-		if err != nil {
+		if actor == input.UserID || input.UserID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		// ペアロック・active 確認・INSERT・friendships / follows / friend_requests の後始末を sql/92-block-func.sql の関数で 1 往復にする
+		var code int
+		if err := h.DB.GetContext(ctx, &code, `SELECT block_user($1, $2, $3)`, actor, input.UserID, uuid.NewString()); err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		var inserted bool
-		if err := tx.GetContext(ctx, &inserted, `
-  WITH ins AS (
-    INSERT INTO block_relations (id, blocker_id, blocked_id) VALUES ($1,$2,$3)
-    ON CONFLICT (blocker_id, blocked_id) DO NOTHING RETURNING id
-  ), f AS (
-    DELETE FROM friendships WHERE user_low_id=$4 AND user_high_id=$5 AND EXISTS (SELECT 1 FROM ins)
-  ), fo AS (
-    DELETE FROM follows WHERE ((follower_id=$2 AND followee_id=$3) OR (follower_id=$3 AND followee_id=$2)) AND EXISTS (SELECT 1 FROM ins)
-  ), fr AS (
-    UPDATE friend_requests SET status='cancelled', updated_at=clock_timestamp() WHERE status='pending' AND ((requester_id=$2 AND recipient_id=$3) OR (requester_id=$3 AND recipient_id=$2)) AND EXISTS (SELECT 1 FROM ins)
-  )
-  SELECT EXISTS (SELECT 1 FROM ins)`, uuid.NewString(), actor, input.UserID, min(actor, input.UserID), max(actor, input.UserID)); err != nil {
-			return err
-		}
-		if !inserted {
+		switch code {
+		case 404:
+			return NewAPIError(http.StatusNotFound, "relationship_not_found")
+		case 409:
 			return NewAPIError(http.StatusConflict, "relationship_conflict")
-		}
-		if err := tx.Commit(); err != nil {
-			return err
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
