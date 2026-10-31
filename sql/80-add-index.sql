@@ -10,3 +10,6 @@ CREATE INDEX IF NOT EXISTS idx_block_relations_blocked_id ON block_relations (bl
 CREATE INDEX IF NOT EXISTS idx_posts_posting_window_id_posted_at_id ON posts (posting_window_id, posted_at DESC, id DESC) WHERE deleted_at IS NULL;
 -- register の LOCK TABLE users を外すための一意制約（go/user_api.go の ON CONFLICT (username) が使う）
 CREATE UNIQUE INDEX IF NOT EXISTS uq_users_username ON users (username);
+-- followers / following 一覧（go/relationship_list_api.go）の ORDER BY updated_at DESC, id DESC LIMIT 51 を index 順で返す（#73）
+CREATE INDEX IF NOT EXISTS idx_follows_followee_id_updated_at_id ON follows (followee_id, updated_at DESC, id DESC);
+CREATE INDEX IF NOT EXISTS idx_follows_follower_id_updated_at_id ON follows (follower_id, updated_at DESC, id DESC);
