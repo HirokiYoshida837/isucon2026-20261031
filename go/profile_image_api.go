@@ -32,6 +32,7 @@ func putProfileImageHandler(h *HandlerContext) echo.HandlerFunc {
 
 		ctx := c.Request().Context()
 		userID := GetSession(c).UserID
+		imageID := uuid.NewString()
 		var n int
 		if err := h.DB.GetContext(ctx, &n, `
 WITH old AS (SELECT profile_image_id FROM users WHERE id=$1 FOR NO KEY UPDATE),
@@ -40,12 +41,13 @@ ins_key AS (INSERT INTO image_keys(id,created_at,owner_user_id) SELECT id,create
 upd AS (UPDATE users SET profile_image_id=$2,updated_at=clock_timestamp() WHERE id=$1),
 del_key AS (DELETE FROM image_keys WHERE id=(SELECT profile_image_id FROM old) RETURNING created_at),
 del AS (DELETE FROM image_objects WHERE id=(SELECT profile_image_id FROM old) AND created_at=(SELECT created_at FROM del_key))
-SELECT count(*) FROM old`, userID, uuid.NewString(), data); err != nil {
+SELECT count(*) FROM old`, userID, imageID, data); err != nil {
 			return err
 		}
 		if n == 0 {
 			return NewAPIError(http.StatusNotFound, "account_not_found")
 		}
+		imageObjectCache.put(imageID, "image/jpeg", data)
 		return c.NoContent(http.StatusNoContent)
 	}
 }
