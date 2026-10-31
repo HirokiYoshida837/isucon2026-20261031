@@ -41,11 +41,33 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 
 		ctx := c.Request().Context()
-		var secretKeyHash string
-		err = h.DB.GetContext(ctx, &secretKeyHash, `
-   SELECT u.secret_key_hash
-   FROM image_objects i JOIN users u ON u.id = i.owner_user_id
-   WHERE i.id = $1 AND u.status = 'active'
+		// 持ち主の鍵・削除状態・本体を 1 往復で取る。削除状態は毎回確認する（即時反映）。
+		// 生存していないときは本体を転送しない。
+		var object struct {
+			SecretKeyHash string `db:"secret_key_hash"`
+			MediaType     string `db:"media_type"`
+			Alive         bool   `db:"alive"`
+			Data          []byte `db:"data"`
+		}
+		err = h.DB.GetContext(ctx, &object, `
+   SELECT x.secret_key_hash, x.media_type, x.alive, CASE WHEN x.alive THEN x.data END AS data
+   FROM (
+     SELECT u.secret_key_hash, i.media_type, i.data, (
+       COALESCE(u.profile_image_id = i.id, false)
+       OR EXISTS (
+         SELECT 1 FROM posts p
+         WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
+       )
+       OR EXISTS (
+         SELECT 1 FROM realmojis r
+         JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
+         JOIN users author ON author.id = p.author_id AND author.status = 'active'
+         WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
+       )
+     ) AS alive
+     FROM image_objects i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
+     WHERE i.id = $1
+   ) x
   `, input.ImageID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
@@ -53,7 +75,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		if err != nil {
 			return err
 		}
-		key, err := imageSigningKey(secretKeyHash)
+		key, err := imageSigningKey(object.SecretKeyHash)
 		if err != nil {
 			return err
 		}
@@ -61,34 +83,8 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 			c.Set("abuse", "invalid_signature")
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
-
-		// 削除状態を毎回確認する。即時反映も5秒以内の許容範囲に含まれる。
-		var object struct {
-			Data      []byte `db:"data"`
-			MediaType string `db:"media_type"`
-		}
-		err = h.DB.GetContext(ctx, &object, `
-   SELECT i.data, i.media_type
-   FROM image_objects i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
-   WHERE i.id = $1 AND (
-     u.profile_image_id = i.id
-     OR EXISTS (
-       SELECT 1 FROM posts p
-       WHERE p.image_id = i.id AND p.author_id = u.id AND p.deleted_at IS NULL
-     )
-     OR EXISTS (
-       SELECT 1 FROM realmojis r
-       JOIN posts p ON p.id = r.post_id AND p.deleted_at IS NULL
-       JOIN users author ON author.id = p.author_id AND author.status = 'active'
-       WHERE r.image_id = i.id AND r.reactor_id = u.id AND r.replaced_at IS NULL AND r.deleted_at IS NULL
-     )
-   )
-  `, input.ImageID)
-		if errors.Is(err, sql.ErrNoRows) {
+		if !object.Alive {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
-		}
-		if err != nil {
-			return err
 		}
 		if exp <= time.Now().Unix() {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
