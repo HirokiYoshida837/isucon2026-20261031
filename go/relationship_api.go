@@ -19,17 +19,25 @@ func deleteFriendshipHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.UserID)
+		if actor == input.UserID || input.UserID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		// 単一行の DELETE は原子的なのでペアロック不要。0 行のときだけ 404 / http.StatusConflict を判定する。
+		result, err := h.DB.ExecContext(ctx, `DELETE FROM friendships WHERE user_low_id=$1 AND user_high_id=$2 AND (SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active') = 2`, min(actor, input.UserID), max(actor, input.UserID))
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		result, err := tx.ExecContext(ctx, `DELETE FROM friendships WHERE user_low_id=$1 AND user_high_id=$2`, min(actor, input.UserID), max(actor, input.UserID))
-		if err := requireRelationshipChange(result, err, http.StatusConflict, "relationship_conflict"); err != nil {
+		if n, err := result.RowsAffected(); err != nil {
 			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+		} else if n == 0 {
+			var active int
+			if err := h.DB.GetContext(ctx, &active, `SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active'`, actor, input.UserID); err != nil {
+				return err
+			}
+			if active != 2 {
+				return NewAPIError(http.StatusNotFound, "relationship_not_found")
+			}
+			return NewAPIError(http.StatusConflict, "relationship_conflict")
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
@@ -154,17 +162,25 @@ func unblockHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, input.UserID)
+		if actor == input.UserID || input.UserID == "" {
+			return NewAPIError(http.StatusBadRequest, "invalid_relationship")
+		}
+		// 単一行の DELETE は原子的なのでペアロック不要。0 行のときだけ 404 / http.StatusForbidden を判定する。
+		result, err := h.DB.ExecContext(ctx, `DELETE FROM block_relations WHERE blocker_id=$1 AND blocked_id=$2 AND (SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active') = 2`, actor, input.UserID)
 		if err != nil {
 			return err
 		}
-		defer tx.Rollback()
-		result, err := tx.ExecContext(ctx, `DELETE FROM block_relations WHERE blocker_id=$1 AND blocked_id=$2`, actor, input.UserID)
-		if err := requireRelationshipChange(result, err, http.StatusForbidden, "relationship_action_forbidden"); err != nil {
+		if n, err := result.RowsAffected(); err != nil {
 			return err
-		}
-		if err := tx.Commit(); err != nil {
-			return err
+		} else if n == 0 {
+			var active int
+			if err := h.DB.GetContext(ctx, &active, `SELECT count(*) FROM users WHERE id IN ($1,$2) AND status='active'`, actor, input.UserID); err != nil {
+				return err
+			}
+			if active != 2 {
+				return NewAPIError(http.StatusNotFound, "relationship_not_found")
+			}
+			return NewAPIError(http.StatusForbidden, "relationship_action_forbidden")
 		}
 		return c.NoContent(http.StatusNoContent)
 	}
