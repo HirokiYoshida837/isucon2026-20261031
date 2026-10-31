@@ -65,29 +65,33 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
 
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		post, err := getPost(ctx, h.DB, input.PostID)
+		tx, err := h.DB.BeginTxx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var lock postPairLock
+		err = tx.GetContext(ctx, &lock, postPairLockSQL, actor, input.PostID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
 		if err != nil {
 			return err
 		}
-		if actor == post.AuthorID {
+		if actor == lock.AuthorID {
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
-		tx, err := beginRelationshipTx(ctx, h.DB, actor, post.AuthorID)
-		if err != nil {
-			return err
+		if lock.ActiveCount != 2 {
+			return NewAPIError(http.StatusNotFound, "relationship_not_found")
 		}
-		defer tx.Rollback()
-		allowed, err := canViewPost(ctx, tx, actor, post.ID)
+		allowed, err := canViewPost(ctx, tx, actor, input.PostID)
 		if err != nil {
 			return err
 		}
 		if !allowed {
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE realmojis SET replaced_at=clock_timestamp() WHERE post_id=$1 AND reactor_id=$2 AND replaced_at IS NULL AND deleted_at IS NULL`, post.ID, actor); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE realmojis SET replaced_at=clock_timestamp() WHERE post_id=$1 AND reactor_id=$2 AND replaced_at IS NULL AND deleted_at IS NULL`, input.PostID, actor); err != nil {
 			return err
 		}
 		var reaction RealMojiWithReactor
@@ -100,7 +104,7 @@ func replaceRealMojiHandler(h *HandlerContext) echo.HandlerFunc {
    )
    SELECT r.id,r.post_id,r.reactor_id,r.image_id,r.reaction_type,r.created_at,r.replaced_at,r.deleted_at, `+userColumnsAs("u", "reactor")+`
    FROM r JOIN users u ON u.id = r.reactor_id AND u.status = 'active'
-  `, uuid.NewString(), post.ID, actor, uuid.NewString(), input.ReactionType, data); err != nil {
+  `, uuid.NewString(), input.PostID, actor, uuid.NewString(), input.ReactionType, data); err != nil {
 			return err
 		}
 		if err := reaction.Reactor.setImageKey(); err != nil {

@@ -37,26 +37,23 @@ func createCommentHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		ctx := c.Request().Context()
 		actor := GetSession(c).UserID
-		post, err := getPost(ctx, h.DB, input.PostID)
+		tx, err := h.DB.BeginTxx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		var lock postPairLock
+		err = tx.GetContext(ctx, &lock, postPairLockSQL, actor, input.PostID)
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "interaction_forbidden")
 		}
 		if err != nil {
 			return err
 		}
-		tx, err := h.DB.BeginTxx(ctx, nil)
-		if err != nil {
-			return err
-		}
-		defer tx.Rollback()
-		var lockedIDs []string
-		if err := tx.SelectContext(ctx, &lockedIDs, pairLockCTE+`SELECT u.id FROM users u, pair_lock WHERE u.id IN ($1, $2) ORDER BY u.id`, actor, post.AuthorID); err != nil {
-			return err
-		}
-		if len(lockedIDs) == 0 || (actor != post.AuthorID && len(lockedIDs) != 2) {
+		if lock.UserCount == 0 || (actor != lock.AuthorID && lock.UserCount != 2) {
 			return sql.ErrNoRows
 		}
-		allowed, err := canComment(ctx, tx, actor, post.ID)
+		allowed, err := canComment(ctx, tx, actor, input.PostID)
 		if err != nil {
 			return err
 		}
@@ -71,7 +68,7 @@ func createCommentHandler(h *HandlerContext) echo.HandlerFunc {
    )
    SELECT c.id,c.post_id,c.author_id,c.body,c.created_at,c.deleted_at, `+userColumnsAs("u", "author")+`
    FROM c JOIN users u ON u.id = c.author_id AND u.status = 'active'
-  `, uuid.NewString(), post.ID, actor, input.Body); err != nil {
+  `, uuid.NewString(), input.PostID, actor, input.Body); err != nil {
 			return err
 		}
 		if err := comment.Author.setImageKey(); err != nil {
