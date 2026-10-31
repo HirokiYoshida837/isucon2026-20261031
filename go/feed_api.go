@@ -48,7 +48,8 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			return NewAPIError(http.StatusBadRequest, "invalid_pagination")
 		}
 		ctx := c.Request().Context()
-		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID)
+		// following は友達の友達の判定を SQL（EXISTS）で行うので、友達の全辺は要らない
+		viewer, err := loadViewerContext(ctx, h.DB, GetSession(c).UserID, input.Feed != "following")
 		if errors.Is(err, sql.ErrNoRows) {
 			return c.JSON(http.StatusOK, getFeedResponse{Items: []feedItemResponse{}})
 		}
@@ -56,15 +57,6 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		following := map[string]bool{}
-		if input.Feed == "following" {
-			var followeeIDs []string
-			if err := h.DB.SelectContext(ctx, &followeeIDs, `SELECT followee_id FROM follows WHERE follower_id = $1`, viewer.ID); err != nil {
-				return err
-			}
-			for _, id := range followeeIDs {
-				following[id] = true
-			}
-		}
 		beforePostedAt, beforeID := input.BeforePostedAt, input.BeforeID
 		if ranked {
 			beforePostedAt, beforeID = nil, ""
@@ -102,11 +94,23 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 				}
 			}
 		case "following":
-			for id := range following {
-				authors = append(authors, id)
+			// フォロー先の取得と canView の公開範囲判定（友達の友達は friendships の EXISTS）を SQL に寄せる。
+			// ranked ではなく SQL の条件が canView && matchesFeed と一致するので、Go 側の判定は要らず先頭 51 件で足りる
+			friends := make([]string, 0, len(viewer.Friends))
+			for id := range viewer.Friends {
+				friends = append(friends, id)
 			}
+			conditions += ` AND p.author_id IN (SELECT followee_id FROM follows WHERE follower_id = $1)
+   AND (p.visibility = 'public'
+    OR (p.visibility = 'friends' AND p.author_id = ANY($5::text[]))
+    OR (p.visibility = 'friends_of_friends' AND (p.author_id = ANY($5::text[]) OR EXISTS(
+         SELECT 1 FROM friendships f
+         WHERE (f.user_low_id = p.author_id AND f.user_high_id = ANY($5::text[]))
+            OR (f.user_high_id = p.author_id AND f.user_low_id = ANY($5::text[]))))))`
+			args = append(args, friends)
+			limit = " LIMIT 51"
 		}
-		if input.Feed != "public" {
+		if input.Feed != "public" && input.Feed != "following" {
 			conditions += ` AND p.author_id = ANY($5::text[])`
 			args = append(args, authors)
 		}
@@ -117,7 +121,7 @@ func getFeedHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		candidates := make([]PostWithAuthor, 0)
 		for _, post := range posts {
-			if viewer.canView(post.Post) && matchesFeed(viewer, following, post.Post, input.Feed) {
+			if input.Feed == "following" || viewer.canView(post.Post) && matchesFeed(viewer, following, post.Post, input.Feed) {
 				candidates = append(candidates, post)
 			}
 		}

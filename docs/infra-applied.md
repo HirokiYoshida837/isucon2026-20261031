@@ -18,6 +18,7 @@
 | 10-31 03:09 | asia1 / europe1 / america1 | nginx サイト設定 `apply-site.sh`（PR #49 + #55）+ `/etc/nginx/isucon/proxy_keepalive.conf` | upstream app keepalive 128、SSE（`/api/notifications`）の read/send timeout 1h・buffering off、画像 3 秒キャッシュ | `rollback.sh -y 20261031-030939-site`（asia1）/ `20261031-030942-site`（europe1）/ `20261031-030946-site`（america1） |
 
 ## 未適用
+- isureal-go の GC 設定（#92）: `.claude/skills/infra-tuning/infra/systemd/isureal-go.service.d/gc.conf`（GOGC=200、GOMEMLIMIT=2GiB）。asia1 / europe1 / america1 に配置する。戻し方はファイル冒頭
 - なし（C2 `tcp_tw_reuse=1` はベンチ後の TIME_WAIT を見て判断）
 
 ## 最終提出前（終了 -90 分）
