@@ -9,6 +9,8 @@ if [ -n "$ISU_BEFORE_CMD" ]; then
     ssh "${SSH_OPTS[@]}" "$h" "$ISU_BEFORE_CMD" >/dev/null 2>&1 || echo "⚠️ $h で準備コマンドが失敗" >&2
   done
 fi
+# ベンチ中の CPU プロファイル（pprof）の待機を各アプリサーバーで始める（回収は bench-report.sh）
+"$SKILL_DIR/pprof-start.sh"
 START=$(date +%s)
 echo "$START" > "$ISU_LOG_DIR/.bench-start"
 rm -f "$ISU_LOG_DIR/.bench-end"

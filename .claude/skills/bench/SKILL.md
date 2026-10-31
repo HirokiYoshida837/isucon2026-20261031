@@ -33,12 +33,19 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
 | `deploy.sh [branch\|pr番号] [hosts...]` | 各サーバーで `REF=<branch\|pr番号> <ISU_DEPLOY_CMD>` を実行。反映コミットと成否を Discord に投稿。失敗ホストはログ添付。既定は `main`。数字を渡すと PR 番号として扱う |
 | `bench-start.sh [メモ]` | 各サーバーで `ISU_BEFORE_CMD`（bench-before.sh）を実行し、開始時刻を記録して投稿 |
 | `bench-end.sh [スコア] [PASS/FAIL]` | ベンチ完了を確認した直後に実行。完了時刻を記録して投稿 |
-| `bench-report.sh <スコア> [メモ]` | 各サーバーで `ISU_AFTER_CMD`（bench-after.sh）を実行し、NewRelic（開始〜完了の期間ぴったり）と合わせて投稿。スコア履歴に追記 |
+| `bench-report.sh <スコア> [メモ]` | 各サーバーで `ISU_AFTER_CMD`（bench-after.sh）を実行し、NewRelic（開始〜完了の期間ぴったり）と pprof の集計を合わせて投稿。スコア履歴に追記 |
+| `pprof-start.sh` | bench-start.sh が呼ぶ。各アプリサーバーに待機スクリプトを置き、負荷開始（アクションログが 3 秒に 5 行以上）を検知したら CPU プロファイルを 60 秒取る |
+| `pprof-collect.sh <保存先>` | bench-report.sh が呼ぶ。各サーバーの `/tmp/isu-pprof/cpu.prof` を回収し、`go tool pprof -top` の flat / cum / アプリ関数だけ を `pprof-<host>.txt` に書き、要約を出す |
 | `discord-post.sh [-f file] "本文"` | 任意の投稿。2000 文字超は自動で添付に回す |
 
 - 設定: `~/.config/isucon/isucon.env`（ホスト・デプロイ・ベンチ前後コマンド。gh-setup / newrelic-setup と共通）と `discord.env`（Webhook URL）。中身を表示・出力しないこと
 - 履歴: リポジトリ直下の `bench-logs/scores.tsv`（.gitignore 済み）
 - `DRY_RUN=1` で Discord に送らず内容だけ表示する
+- ベンチ中の CPU プロファイル（pprof）は bench-start.sh が仕込み、bench-report.sh が回収する
+  - アプリ側は `go/pprof.go`（127.0.0.1:6060、PR #59）。提出前の掃除で外す（harness-setup の 04 のお片付けリスト）
+  - 投稿の「アプリの CPU 内訳」の読み方: `CPU 32.85s / 40s（82%）` は計測 40 秒のうち CPU を 32.85 秒使った（2 コアなら 200% が上限）。`app(cum)` はアプリの関数で呼び出し先込みの割合、`leaf(flat)` は CPU を直接使った関数
+  - ホストは `ISU_PPROF_HOSTS`（既定は `ISU_HOSTS` 全部。pprof に届かないホストは自動でスキップ）。長さは `ISU_PPROF_SECONDS`（既定 60）。`~/.config/isucon/isucon.env` で上書きできる
+  - 手元に `go` が要る（`go tool pprof`）。無いと要約は「集計できない」になり、`.prof` だけ残る
 - ベンチ中のリソース記録は bench-before.sh が裏で始め、bench-after.sh が止めて集計する
   - 2 秒ごと: CPU・メモリ・スワップ・load・ディスク・NW・TCP。5 秒ごと: プロセス別 CPU・メモリ（pidstat）
   - `db_conn` は `-` で出る（resource-sampler.sh が MySQL 専用で、PostgreSQL の接続数は取らないため）
@@ -57,7 +64,7 @@ SKILL `bench-setup` が作った。確認日時: 2026-10-31 10:55 JST、すー
    - 完了を確認したら、すぐ `bench-end.sh <スコア> <PASS|FAIL>` で完了時刻を記録する
    - 結果の読み取り: ジョブの詳細ページの `Result`（`FinishedPassed`、`Score`、`Score Breakdown`）と `Stdout` 末尾の JSON（`pass`・`score`・`messages`）。FAIL の表示は未確認で、`pass` と `messages` を見る
 4. `bench-report.sh <スコア> "<変更内容>"`。FAIL のときはポータルのエラー文を `discord-post.sh` で続けて投稿する
-5. 添付の集計結果と NewRelic（SKILL `newrelic-nrql`）から、次の改善候補を 3 つまで挙げる
+5. 添付の集計結果と NewRelic（SKILL `newrelic-nrql`）、pprof の「アプリの CPU 内訳」から、次の改善候補を 3 つまで挙げる。CPU が張り付いているホストは pprof の app(cum) 上位を、空いているホストは NewRelic の DB 時間を見る
 6. スコアが下がったら、その変更の revert を提案する
 
 ## この問題の注意
