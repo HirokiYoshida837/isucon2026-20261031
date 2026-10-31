@@ -73,6 +73,10 @@ func openPostingWindowHandler(h *HandlerContext) echo.HandlerFunc {
   `, region, uuid.NewString(), localDate, startsAt, startsAt.Add(time.Duration(seconds)*time.Second)); err != nil {
 			return err
 		}
+		// commit 時に各 app へ届く（LISTEN している NotificationHub が即ポーリングする）
+		if _, err := tx.ExecContext(ctx, `SELECT pg_notify($1, $2)`, postingWindowChannel, region); err != nil {
+			return err
+		}
 		if err := tx.Commit(); err != nil {
 			return err
 		}
