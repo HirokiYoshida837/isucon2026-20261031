@@ -30,6 +30,7 @@ func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 		// 持ち主・削除は毎回 DB で見る。起動時のウォームアップの結果を残すため。
 		// issuedImageURLs は前の走行中に作った分を捨てる（ウォームアップ分は残す。再起動直後と同じ状態で測るため）。
 		issuedImageURLs.dropCold()
+		startPrefetch() // 走行の準備の間に、署名を europe1 / america1 に作り直してもらう
 		h.Notifications.reset()
 		sessionCache.reset()
 

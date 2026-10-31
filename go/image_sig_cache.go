@@ -50,7 +50,7 @@ func (c *verifiedSigCache) reset() {
 
 // 発行した署名付き URL のキャッシュ。(鍵, image_id) ごとに最後に発行した URL と exp を持ち、signedURLReuse の間は使い回す。
 // 上限を超えたら全消去する。
-const signedURLMaxEntries = 200000
+const signedURLMaxEntries = 800000 // 先読み（asia の投稿 約 62 万件）が入る大きさ
 
 type signedURLKey struct {
 	key     string
@@ -58,9 +58,11 @@ type signedURLKey struct {
 }
 
 type signedURLEntry struct {
-	url  string
-	exp  int64
-	warm bool // 起動時のウォームアップで入れた分
+	url        string
+	exp        int64
+	warm       bool     // 起動時のウォームアップで入れた分
+	sig        [32]byte // 先読みの分を、配るときに検証済みへ登録するために持つ
+	unverified bool     // 先読みで入れた分。verifiedImageSigs には配るまで入れない（件数が上限を超えて全消去されるのを避ける）
 }
 
 type signedURLCache struct {
@@ -100,5 +102,14 @@ func (c *signedURLCache) dropCold() {
 		if !e.warm {
 			delete(c.items, k)
 		}
+	}
+}
+
+func (c *signedURLCache) markVerified(k signedURLKey) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if e, ok := c.items[k]; ok {
+		e.unverified = false
+		c.items[k] = e
 	}
 }
