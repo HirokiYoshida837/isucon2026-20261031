@@ -32,4 +32,5 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--file=87-create-post-func.sql \
 	--file=88-posts-local-date.sql \
 	--file=89-mutual-friends.sql \
-	--file=90-interaction-func.sql
+	--file=90-interaction-func.sql \
+	--file=91-delete-post-func.sql
