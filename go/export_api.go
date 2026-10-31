@@ -28,7 +28,6 @@ func exportPostsHandler(h *HandlerContext) echo.HandlerFunc {
    FROM posts p
    JOIN posting_windows w ON w.id = p.posting_window_id
    JOIN users u ON u.id = p.author_id AND u.status = 'active'
-   JOIN image_objects i ON i.id = p.image_id
    WHERE p.author_id = $1 AND p.deleted_at IS NULL
    ORDER BY p.posted_at, p.id
   `, userID); err != nil {
@@ -78,7 +77,7 @@ func exportPostsHandler(h *HandlerContext) echo.HandlerFunc {
 		for _, post := range posts {
 			imageData := images[post.ImageID]
 			if imageData == nil {
-				continue // 画像が無い投稿は従来の JOIN と同じく出さない
+				continue // 画像が無い投稿は出さない（以前の JOIN image_objects と同じ挙動）
 			}
 			if err := post.Author.setImageKey(); err != nil {
 				return err
