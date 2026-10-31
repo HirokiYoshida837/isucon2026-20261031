@@ -3,6 +3,7 @@ package isureal
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	"github.com/jmoiron/sqlx"
 )
@@ -11,6 +12,9 @@ import (
 // 1 goroutine だけで回す。POST /api/initialize の到着（ベンチ開始）で打ち切る。入れた分はそのまま使える。
 // DB が未起動などで失敗したら黙って終わる（アプリの起動は止めない）。
 const warmUpMaxEntries = 90000 // verifiedSigMaxEntries を超えると全消去されるため、その下に収める
+
+// ウォームアップ中に入れたキャッシュ項目に印を付けるための旗。
+var warmingUp atomic.Bool
 
 var (
 	warmUpMu     sync.Mutex
@@ -24,6 +28,8 @@ func startImageURLWarmUp(db *sqlx.DB, region string) {
 	warmUpMu.Unlock()
 	go func() {
 		defer cancel()
+		warmingUp.Store(true)
+		defer warmingUp.Store(false)
 		warmUpImageURLs(ctx, db, region)
 	}()
 }

@@ -58,8 +58,9 @@ type signedURLKey struct {
 }
 
 type signedURLEntry struct {
-	url string
-	exp int64
+	url  string
+	exp  int64
+	warm bool // 起動時のウォームアップで入れた分
 }
 
 type signedURLCache struct {
@@ -89,4 +90,15 @@ func (c *signedURLCache) reset() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.items = map[signedURLKey]signedURLEntry{}
+}
+
+// ウォームアップで入れた分だけ残す。前のベンチ走行中に作った分は捨てて、再起動直後と同じ状態から測る。
+func (c *signedURLCache) dropCold() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for k, e := range c.items {
+		if !e.warm {
+			delete(c.items, k)
+		}
+	}
 }

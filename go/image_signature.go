@@ -54,7 +54,7 @@ func signedImageURL(user User, imageID string) string {
 	}
 	u := "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
 	if cacheable {
-		issuedImageURLs.put(cacheKey, signedURLEntry{url: u, exp: exp})
+		issuedImageURLs.put(cacheKey, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load()})
 		// 自分が発行した署名は検証済みとして登録する（呼び出し元は画像の持ち主の鍵で署名している）。
 		verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
 	}
