@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/google/uuid"
 	"github.com/labstack/echo/v5"
@@ -93,19 +94,16 @@ func registerHandler(h *HandlerContext) echo.HandlerFunc {
 		if _, err := tx.ExecContext(ctx, `LOCK TABLE users IN SHARE ROW EXCLUSIVE MODE`); err != nil {
 			return err
 		}
-		var exists bool
-		if err := tx.GetContext(ctx, &exists, `SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)`, input.Username); err != nil {
-			return err
-		}
-		if exists {
+		var user User
+		err = tx.GetContext(ctx, &user, `
+   INSERT INTO users (id, username, secret_key_hash, display_name, region)
+   SELECT $1::varchar, $2::varchar, $3::text, $4::text, $5::text
+   WHERE NOT EXISTS (SELECT 1 FROM users WHERE username = $2::varchar)
+   RETURNING `+strings.Join(userColumns, ", "),
+			uuid.NewString(), input.Username, hex.EncodeToString(hash[:]), input.DisplayName, input.Region)
+		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusConflict, "username_taken")
 		}
-		userID := uuid.NewString()
-		if _, err := tx.ExecContext(ctx, `INSERT INTO users (id, username, secret_key_hash, display_name, region) VALUES ($1, $2, $3, $4, $5)`,
-			userID, input.Username, hex.EncodeToString(hash[:]), input.DisplayName, input.Region); err != nil {
-			return err
-		}
-		user, err := getUser(ctx, tx, userID)
 		if err != nil {
 			return err
 		}
