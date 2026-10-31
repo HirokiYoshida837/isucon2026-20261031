@@ -30,4 +30,5 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--file=85-friend-edges.sql \
 	--file=86-window-notifications.sql \
 	--file=87-create-post-func.sql \
-	--file=88-posts-local-date.sql
+	--file=88-posts-local-date.sql \
+	--file=89-mutual-friends.sql
