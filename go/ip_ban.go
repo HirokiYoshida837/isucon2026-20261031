@@ -16,6 +16,14 @@ const ipBanReloadInterval = 200 * time.Millisecond
 type IPBanList struct {
 	reloading sync.Mutex
 	snapshot  atomic.Pointer[ipBanSnapshot]
+	local     sync.Map // in-app guard が直接入れた BAN: ip -> time.Time
+}
+
+func (l *IPBanList) addLocal(ip string, until time.Time) { l.local.Store(ip, until) }
+
+func (l *IPBanList) clearLocal() {
+	l.local.Range(func(k, _ any) bool { l.local.Delete(k); return true })
+	l.snapshot.Store(nil)
 }
 
 type ipBanSnapshot struct {
@@ -38,6 +46,9 @@ func (l *IPBanList) Banned(ctx context.Context, db *sqlx.DB, ip string) (bool, e
 		}
 		l.snapshot.Store(loaded)
 		snapshot = loaded
+	}
+	if v, ok := l.local.Load(ip); ok && time.Now().Before(v.(time.Time)) {
+		return true, nil
 	}
 	if snapshot == nil {
 		return false, nil

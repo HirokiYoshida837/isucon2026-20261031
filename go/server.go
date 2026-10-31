@@ -79,6 +79,9 @@ func NewServer(config *Config) *echo.Echo {
 	}
 	go handlerContext.Notifications.Run(context.Background())
 	e.Use(IPBanMiddleware(handlerContext))
+	if config.GuardInApp {
+		startGuard(db, handlerContext.IPBans)
+	}
 
 	e.POST("/api/initialize", initializeHandler(handlerContext))
 	e.POST("/api/auth/register", registerHandler(handlerContext))

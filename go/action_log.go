@@ -64,6 +64,17 @@ func ActionLogMiddleware(minLevel string, output io.Writer) echo.MiddlewareFunc 
 			}
 			_, status := echo.ResolveResponseStatus(c.Response(), err)
 
+			if action, ok := actionNames[c.RouteInfo().Method+" "+c.RouteInfo().Path]; ok {
+				switch {
+				case action == "login" && status == http.StatusUnauthorized:
+					guardObserve(guardLogin, c.RealIP())
+				case action == "put_profile_image" && status == http.StatusBadRequest && c.Get("abuse") == "invalid_image":
+					guardObserve(guardInvalidImage, c.RealIP())
+				case action == "get_image" && status == http.StatusForbidden && c.Get("abuse") == "invalid_signature":
+					guardObserve(guardInvalidSignature, c.RealIP())
+				}
+			}
+
 			level := "info"
 			switch {
 			case status >= http.StatusInternalServerError:
