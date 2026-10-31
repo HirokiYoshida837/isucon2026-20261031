@@ -1,6 +1,7 @@
 package isureal
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"database/sql"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/labstack/echo/v5"
+	"golang.org/x/sync/singleflight"
 )
 
 // 画像の生存確認。image_keys.alive をトリガーで保つ（sql/97-image-alive.sql。持ち主が active で、プロフィール・未削除の投稿・有効なリアクションのどれかで使われている）
@@ -19,6 +21,8 @@ const imageAliveSQL = ` i.alive AS alive, i.created_at
    FROM image_keys i JOIN users u ON u.id = i.owner_user_id AND u.status = 'active'
    WHERE i.id = $1
 `
+
+var imageRowFlight singleflight.Group
 
 type getImageRequest struct {
 	ImageID string `param:"imageId" json:"-"`
@@ -59,29 +63,42 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		}
 		entry, cached := imageObjectCache.get(input.ImageID)
 		withData := !cached && verifiedImageSigs.has(sigKey)
-		var object struct {
+		type imageRow struct {
 			SecretKeyHash string    `db:"secret_key_hash"`
 			Alive         bool      `db:"alive"`
 			CreatedAt     time.Time `db:"created_at"`
 			MediaType     *string   `db:"media_type"`
 			Data          []byte    `db:"data"`
 		}
-		// 本体を取らないときは image_objects を参照しない文にする。
-		// 同じ文で $2=false にすると generic plan に全パーティションの Append が残り、毎回 410µs → 87µs かかる
+		// 同じ画像への同時リクエストは 1 回の問い合わせを共有する（走っている間に来たものだけ。終わった結果は使い回さない）。
+		// 結果は読み取り専用。先頭のリクエストが切断されても他が失敗しないよう、キャンセルは引き継がない
+		flightKey := input.ImageID
 		if withData {
-			err = h.DB.GetContext(ctx, &object, `
+			flightKey += "+data"
+		}
+		v, err, _ := imageRowFlight.Do(flightKey, func() (any, error) {
+			var row imageRow
+			qctx := context.WithoutCancel(ctx)
+			var err error
+			// 本体を取らないときは image_objects を参照しない文にする。
+			// 同じ文で $2=false にすると generic plan に全パーティションの Append が残り、毎回 410µs → 87µs かかる
+			if withData {
+				err = h.DB.GetContext(qctx, &row, `
    SELECT u.secret_key_hash,
    (SELECT media_type FROM image_objects WHERE id = i.id AND created_at = i.created_at) AS media_type,
    (SELECT data FROM image_objects WHERE id = i.id AND created_at = i.created_at) AS data,`+imageAliveSQL, input.ImageID)
-		} else {
-			err = h.DB.GetContext(ctx, &object, `SELECT u.secret_key_hash,`+imageAliveSQL, input.ImageID)
-		}
+			} else {
+				err = h.DB.GetContext(qctx, &row, `SELECT u.secret_key_hash,`+imageAliveSQL, input.ImageID)
+			}
+			return &row, err
+		})
 		if errors.Is(err, sql.ErrNoRows) {
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
 		if err != nil {
 			return err
 		}
+		object := v.(*imageRow)
 		if !verifiedImageSigs.has(sigKey) && !pushedSigMatches(input.ImageID, exp, sig) {
 			key, err := imageSigningKey(object.SecretKeyHash)
 			if err != nil {
