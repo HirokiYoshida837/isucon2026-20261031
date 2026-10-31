@@ -39,9 +39,9 @@ var (
 	signFails       atomic.Int32
 	signPausedUntil atomic.Int64
 
-	// 頼まずに asia1 自身で計算する割合（%）。残りは europe1 / america1 に等分（既定は asia 10 / europe 45 / america 45）。
+	// 頼まずに asia1 自身で計算する割合（%）。残りは europe1 / america1 に等分（既定は asia1 75 / asia2 25。europe1 / america1 は使わない）。
 	// ベンチ中は asia1 の CPU が足りないので少なめにする。env で変えられる。
-	signLocalPercent = 10
+	signLocalPercent = 75 // asia1 75% / asia2 25%
 )
 
 func envPercent(name string, def int) int {
@@ -57,7 +57,7 @@ func initSignClient(cfg *Config) {
 	if cfg.Region != "asia" {
 		return
 	}
-	for _, p := range strings.Split(envOrDefault("ISUREAL_SIGN_PEERS", "192.168.2.10:8081,192.168.3.10:8081"), ",") {
+	for _, p := range strings.Split(envOrDefault("ISUREAL_SIGN_PEERS", "192.168.4.10:8081"), ",") {
 		if p = strings.TrimSpace(p); p != "" {
 			signPeers = append(signPeers, p)
 		}

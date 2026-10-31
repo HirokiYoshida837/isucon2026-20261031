@@ -1,0 +1,21 @@
+# asia2 で署名の計算だけを受け持つ（アプリ本体と同じバイナリを ISUREAL_SIGN_ONLY=1 で動かす）。
+# DB（PostgreSQL）を押しのけないよう、優先度を下げる。インストール: make sign.install（asia2 で 1 回だけ）
+[Unit]
+Description=ISUReal signature service (sign-only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=isucon
+Group=isucon
+WorkingDirectory=/home/isucon/webapp/go
+EnvironmentFile=/home/isucon/env.sh
+Environment=ISUREAL_SIGN_ONLY=1
+ExecStart=/home/isucon/webapp/go/isureal
+Nice=19
+CPUWeight=20
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

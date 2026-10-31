@@ -6,9 +6,10 @@
 GO_PATH := /home/isucon/local/go/bin
 APP_UNIT := isureal-go.service
 PG_UNIT := postgresql.service
+SIGN_UNIT := isureal-sign.service
 
 .PHONY: all.restart
-all.restart: postgres.restart nginx.restart isureal.restart
+all.restart: postgres.restart nginx.restart isureal.restart sign.restart
 
 
 # nginx
@@ -47,6 +48,18 @@ isureal.build:
 isureal.restart:
 	@if systemctl is-enabled --quiet $(APP_UNIT); then sudo systemctl restart $(APP_UNIT); else echo "skip: $(APP_UNIT) は enabled ではない"; fi
 
+# 署名専用サービス（asia2 だけで enabled。他のサーバーでは skip される）
+.PHONY: sign.restart
+sign.restart:
+	@if systemctl is-enabled --quiet $(SIGN_UNIT) 2>/dev/null; then sudo systemctl restart $(SIGN_UNIT); else echo "skip: $(SIGN_UNIT) は enabled ではない"; fi
+
+# asia2 で 1 回だけ実行する（ユニットを置いて enable する）
+.PHONY: sign.install
+sign.install:
+	sudo install -m 644 infra/$(SIGN_UNIT) /etc/systemd/system/$(SIGN_UNIT)
+	sudo systemctl daemon-reload
+	sudo systemctl enable --now $(SIGN_UNIT)
+
 .PHONY: isureal.logs
 isureal.logs:
 	journalctl -f -u $(APP_UNIT)
@@ -67,3 +80,4 @@ deploy:
 	fi
 	$(MAKE) isureal.build
 	$(MAKE) isureal.restart
+	$(MAKE) sign.restart

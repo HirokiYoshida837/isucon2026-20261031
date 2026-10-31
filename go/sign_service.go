@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"runtime"
@@ -96,13 +97,28 @@ func privateIP() string {
 	return ""
 }
 
-func startSignService(cfg *Config) {
+func newSignServer(cfg *Config) *http.Server {
 	ip := privateIP()
 	if ip == "" {
-		return
+		return nil
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /internal/sign", signHandler(signTokenFor(cfg.DBPassword)))
-	srv := &http.Server{Addr: net.JoinHostPort(ip, signServicePort), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	go func() { _ = srv.ListenAndServe() }() // 開けなくても本体は止めない
+	return &http.Server{Addr: net.JoinHostPort(ip, signServicePort), Handler: mux, ReadHeaderTimeout: 5 * time.Second}
+}
+
+// アプリ本体の中で待ち受ける（europe1 / america1 / asia1）。開けなくても本体は止めない。
+func startSignService(cfg *Config) {
+	if srv := newSignServer(cfg); srv != nil {
+		go func() { _ = srv.ListenAndServe() }()
+	}
+}
+
+// 署名 API だけを動かす（asia2 用。DB も画面も持たない）。ISUREAL_SIGN_ONLY=1 のときに main から呼ぶ。
+func RunSignOnly(cfg *Config) error {
+	srv := newSignServer(cfg)
+	if srv == nil {
+		return errors.New("private IP (192.168.x.x) が見つからない")
+	}
+	return srv.ListenAndServe()
 }
