@@ -33,6 +33,9 @@ if [ -x "$NRQL" ]; then
   "$NRQL" --table hosts "$MIN"     > "$OUT/nr-hosts.tsv"     2>/dev/null || echo "(取得失敗)" > "$OUT/nr-hosts.tsv"
 fi
 
+# pprof（bench-start.sh が仕込んだ CPU プロファイル）を回収して集計
+PPROF=$("$SKILL_DIR/pprof-collect.sh" "$OUT" 2>/dev/null)
+
 # スコア履歴（TSV）
 HIST="$ISU_LOG_DIR/scores.tsv"
 [ -f "$HIST" ] || printf 'time\tscore\tcommit\tmember\tmemo\tstart_epoch\tend_epoch\n' > "$HIST"
@@ -67,8 +70,12 @@ $(top "$OUT/nr-endpoints.tsv")
 \`\`\`
 $(host_table)
 \`\`\`
-詳細（プロセス別 CPU・メモリ、DB 接続数、ディスク・NW、alp、pt-query-digest）は添付"
+**アプリの CPU 内訳（pprof、負荷中 ${ISU_PPROF_SECONDS} 秒）**
+\`\`\`
+${PPROF:-（取得なし）}
+\`\`\`
+詳細（プロセス別 CPU・メモリ、DB 接続数、ディスク・NW、alp、pt-query-digest、pprof の上位 40）は添付"
 ARGS=()
-for f in "$OUT"/*; do [ -s "$f" ] && ARGS+=(-f "$f"); done
+for f in "$OUT"/*; do case "$f" in *.prof) continue;; esac; [ -s "$f" ] && ARGS+=(-f "$f"); done
 "$POST" ${ARGS[@]+"${ARGS[@]}"} "$MSG"
 echo "saved: $OUT"
