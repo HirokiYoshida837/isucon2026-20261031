@@ -19,6 +19,7 @@
 | 10-31 06:5x | asia2 | PostgreSQL `conf.d/95-bgwriter.conf`（#188） | bgwriter_delay 20ms、bgwriter_lru_maxpages 1000、bgwriter_lru_multiplier 4.0（SIGHUP で反映） | `sudo rm /etc/postgresql/16/main/conf.d/95-bgwriter.conf && sudo systemctl reload postgresql` |
 
 ## 未適用
+- asia2 PostgreSQL `conf.d/96-log-params.conf`（`log_parameter_max_length = 256`）: スロークエリログに画像 bytea が 1 行 1.7MB で出てログが 9.8GB になっていたのを止める。配置と戻し方はファイル冒頭。あわせて既存ログを `sudo truncate -s 0 /var/log/postgresql/postgresql-16-main.log`
 - isureal-go の GC 設定（#92）: `.claude/skills/infra-tuning/infra/systemd/isureal-go.service.d/gc.conf`（GOGC=200、GOMEMLIMIT=2GiB）。asia1 / europe1 / america1 に配置する。戻し方はファイル冒頭
 - なし（C2 `tcp_tw_reuse=1` はベンチ後の TIME_WAIT を見て判断）
 
