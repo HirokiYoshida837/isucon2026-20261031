@@ -54,6 +54,8 @@ func warmUpImageURLs(ctx context.Context, db *sqlx.DB, region string) {
 		return
 	}
 	defer rows.Close()
+	batch := make([]sigReq, 0, 512)
+	defer func() { prewarmSigs(batch) }()
 	for rows.Next() {
 		if ctx.Err() != nil {
 			return
@@ -66,6 +68,10 @@ func warmUpImageURLs(ctx context.Context, db *sqlx.DB, region string) {
 		if user.setImageKey() != nil {
 			continue
 		}
-		signedImageURL(user, imageID)
+		batch = append(batch, sigReq{key: user.ImageKey, imageID: imageID})
+		if len(batch) == cap(batch) {
+			prewarmSigs(batch)
+			batch = batch[:0]
+		}
 	}
 }
