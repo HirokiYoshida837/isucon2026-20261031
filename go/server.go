@@ -71,6 +71,7 @@ func NewServer(config *Config) *echo.Echo {
 	}
 	warmUpDB(db, dbMaxConns)
 	startImageURLWarmUp(db, config.Region)
+	startSigStat()
 	// 画像署名の先回り: asia1 は受け取る側、europe1 / america1 は計算して送る側（sig_push_*.go）
 	if config.Region == "asia" {
 		startSigPushServer(config.DBPassword)

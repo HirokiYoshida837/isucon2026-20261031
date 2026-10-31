@@ -56,6 +56,11 @@ func prewarmSigs(reqs []sigReq) {
 	if len(keys) < simdMinLanes {
 		return
 	}
+	if warmingUp.Load() { // ウォームアップ中に走行中のリクエストが来ることは無い前提（initialize で止まる）
+		countSigBatch(sWarmBatch, len(keys))
+	} else {
+		countSigBatch(sPrewarmBatch, len(keys))
+	}
 	sigs := imageSignatures(keys, ids, exp)
 	for i := range keys {
 		storeIssued(keys[i], ids[i], exp, sigs[i])

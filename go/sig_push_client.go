@@ -280,8 +280,10 @@ func (p *sigPusher) computeChunk(b int64, ci int) {
 			}
 			var sigs [][]byte
 			if simdAvailable() && len(keys) >= simdMinLanes {
+				countSigBatch(sPushBatch, len(keys))
 				sigs = imageSignatures(keys, ids, exp)
 			} else {
+				sigStat[sPushScalar].Add(int64(len(keys)))
 				sigs = make([][]byte, len(keys))
 				for i := range keys {
 					sigs[i] = imageSignature(keys[i], ids[i], exp)

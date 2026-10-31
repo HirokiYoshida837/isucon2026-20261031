@@ -18,6 +18,7 @@ type initializeResponse struct {
 func initializeHandler(h *HandlerContext) echo.HandlerFunc {
 	return func(c *echo.Context) error {
 		stopImageURLWarmUp() // ベンチ開始。ウォームアップの CPU を渡す（入れた分は残す）
+		flushSigStat("init") // ここまでの増分を出し切る。以降の sigstat 行を足すと走行 1 回ぶん（#287）
 		cmd := exec.Command("../sql/init.sh")
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr

@@ -58,6 +58,7 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 		sigKey := newVerifiedSigKey(input.ImageID, exp, sig)
 		// 以前に検証に失敗した署名は、DB も HMAC も使わずに同じ 403 を返す（結果は変わらない）
 		if rejectedImageSigs.has(sigKey) {
+			countSig(sVRejected)
 			c.Set("abuse", "invalid_signature")
 			return NewAPIError(http.StatusForbidden, "image_forbidden")
 		}
@@ -102,10 +103,15 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 			return err
 		}
 		object := v.(*imageRow)
-		if !verified && !pushedSigMatches(input.ImageID, exp, sig) {
+		if verified {
+			countSig(sVKnown)
+		} else if pushedSigMatches(input.ImageID, exp, sig) {
+			countSig(sVPushed)
+		} else {
 			// 正しい署名を知っていて違うなら、HMAC を計算しなくても不正と分かる（#270）。
 			// DB の問い合わせは省かない（画像や持ち主が無いときは今までどおり abuse を付けずに上で 403 になる）
 			if hasKnown {
+				countSig(sVKnownNG)
 				rejectedImageSigs.add(sigKey)
 				c.Set("abuse", "invalid_signature")
 				return NewAPIError(http.StatusForbidden, "image_forbidden")
@@ -115,10 +121,12 @@ func getImageHandler(h *HandlerContext) echo.HandlerFunc {
 				return err
 			}
 			if !hmac.Equal(sig, imageSignature(key, input.ImageID, exp)) {
+				countSig(sVHMACNG)
 				rejectedImageSigs.add(sigKey)
 				c.Set("abuse", "invalid_signature")
 				return NewAPIError(http.StatusForbidden, "image_forbidden")
 			}
+			countSig(sVHMACOK)
 			verifiedImageSigs.add(input.ImageID, exp, sig)
 		}
 		if !object.Alive {

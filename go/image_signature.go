@@ -43,15 +43,18 @@ func signedImageURL(user User, imageID string) string {
 	exp := sigBucketExp(bucket)
 	// europe1 / america1 が先に計算して渡してきた署名があれば、HMAC を計算しない
 	if sig, ok := pushedSigs.get(bucket, imageID); ok {
+		countSig(sIssuePushed)
 		return buildSignedURL(imageID, exp, sig[:])
 	}
 	cacheable := len(user.ImageKey) == sha256.Size
 	cacheKey := signedURLKey{key: string(user.ImageKey), imageID: imageID}
 	if cacheable {
 		if e, ok := issuedImageURLs.get(cacheKey); ok && e.exp >= exp {
+			countSig(sIssueCached)
 			return e.url
 		}
 	}
+	countSig(sIssueHMAC)
 	sig := imageSignature(user.ImageKey, imageID, exp)
 	if cacheable {
 		return storeIssued(user.ImageKey, imageID, exp, sig)
