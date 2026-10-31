@@ -34,3 +34,7 @@ CREATE INDEX IF NOT EXISTS idx_comments_post_id_active_cover ON comments (post_i
 CREATE INDEX IF NOT EXISTS idx_realmojis_created_at ON realmojis (created_at);
 CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts (created_at);
 CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments (created_at);
+
+-- GET /api/users（ユーザー検索）は username 順に全行（5,500 行）を strpos で評価するので、絞り込みに使う列を INCLUDE して
+-- Index Only Scan にし、heap のページ読み（5,200 ブロック/回 → 約 100）を消す（#248）。DB には CREATE INDEX CONCURRENTLY で貼ってある
+CREATE INDEX IF NOT EXISTS idx_users_username_id_search_cover ON users (username, id) INCLUDE (status, display_name, search_display);
