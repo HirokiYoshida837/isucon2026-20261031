@@ -84,11 +84,6 @@ func listMemories(ctx context.Context, db sqlx.QueryerContext, userID string, st
 	if err != nil {
 		return response, err
 	}
-	postReqs := make([]sigReq, 0, len(posts)*2)
-	for _, post := range posts {
-		postReqs = append(postReqs, imageSigReqs(post.ImageID, post.Author)...)
-	}
-	prewarmSigs(ctx, postReqs) // 署名をまとめて europe1 / america1 に頼む（失敗したら下で自前計算）
 	items := make([]memoryPostResponse, 0, len(posts))
 	for _, post := range posts {
 		items = append(items, memoryPostResponse{
@@ -150,11 +145,6 @@ func loadMemoryInteractions(ctx context.Context, db sqlx.QueryerContext, items [
 	if cErr != nil {
 		return cErr
 	}
-	reactionReqs := make([]sigReq, 0, len(reactions)*2)
-	for _, reaction := range reactions {
-		reactionReqs = append(reactionReqs, imageSigReqs(reaction.ImageID, reaction.Reactor)...)
-	}
-	prewarmSigs(ctx, reactionReqs)
 	for _, reaction := range reactions {
 		item := itemByPostID[reaction.PostID]
 		if len(item.RealMojis) < 50 {

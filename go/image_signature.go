@@ -48,24 +48,15 @@ func signedImageURL(user User, imageID string) string {
 	}
 	exp := now.Add(imageURLLifetime).Unix()
 	sig := imageSignature(user.ImageKey, imageID, exp)
-	if cacheable {
-		return storeIssued(user.ImageKey, imageID, exp, sig)
-	}
-	return buildSignedURL(imageID, exp, sig)
-}
-
-func buildSignedURL(imageID string, exp int64, sig []byte) string {
 	query := url.Values{
 		"exp": {strconv.FormatInt(exp, 10)},
 		"sig": {base64.RawURLEncoding.EncodeToString(sig)},
 	}
-	return "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
-}
-
-// 署名を URL にしてキャッシュに入れる。自分が発行した署名は検証済みとして登録する（鍵は画像の持ち主のもの）。
-func storeIssued(key []byte, imageID string, exp int64, sig []byte) string {
-	u := buildSignedURL(imageID, exp, sig)
-	issuedImageURLs.put(signedURLKey{key: string(key), imageID: imageID}, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load()})
-	verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
+	u := "/api/images/" + url.PathEscape(imageID) + "?" + query.Encode()
+	if cacheable {
+		issuedImageURLs.put(cacheKey, signedURLEntry{url: u, exp: exp, warm: warmingUp.Load()})
+		// 自分が発行した署名は検証済みとして登録する（呼び出し元は画像の持ち主の鍵で署名している）。
+		verifiedImageSigs.add(newVerifiedSigKey(imageID, exp, sig))
+	}
 	return u
 }
