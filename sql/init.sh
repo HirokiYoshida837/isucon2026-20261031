@@ -27,4 +27,5 @@ PGPASSWORD="$ISUREAL_DB_PASSWORD" psql \
 	--file=82-friend-request-func.sql \
 	--file=83-login-func.sql \
 	--file=84-image-keys.sql \
-	--file=85-friend-edges.sql
+	--file=85-friend-edges.sql \
+	--file=86-window-notifications.sql
