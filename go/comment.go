@@ -31,11 +31,14 @@ func selectCommentsWithAuthor(ctx context.Context, db sqlx.QueryerContext, condi
   WHERE c.deleted_at IS NULL `+conditions, args...); err != nil {
 		return nil, err
 	}
+	reqs := make([]sigReq, 0, len(comments))
 	for i := range comments {
 		if err := comments[i].Author.setImageKey(); err != nil {
 			return nil, err
 		}
+		reqs = append(reqs, profileSigReqs(comments[i].Author)...)
 	}
+	prewarmSigs(reqs)
 	return comments, nil
 }
 

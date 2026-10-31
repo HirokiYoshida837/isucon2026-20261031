@@ -32,10 +32,13 @@ func selectCurrentRealMojis(ctx context.Context, db sqlx.QueryerContext, conditi
   WHERE r.replaced_at IS NULL AND r.deleted_at IS NULL `+conditions, args...); err != nil {
 		return nil, err
 	}
+	reqs := make([]sigReq, 0, len(reactions)*2)
 	for i := range reactions {
 		if err := reactions[i].Reactor.setImageKey(); err != nil {
 			return nil, err
 		}
+		reqs = append(reqs, imageSigReqs(reactions[i].ImageID, reactions[i].Reactor)...)
 	}
+	prewarmSigs(reqs)
 	return reactions, nil
 }

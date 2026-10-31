@@ -73,11 +73,14 @@ func selectPostsWithAuthor(ctx context.Context, db sqlx.QueryerContext, conditio
   WHERE p.deleted_at IS NULL `+conditions, args...); err != nil {
 		return nil, err
 	}
+	reqs := make([]sigReq, 0, len(posts)*2)
 	for i := range posts {
 		if err := posts[i].Author.setImageKey(); err != nil {
 			return nil, err
 		}
+		reqs = append(reqs, imageSigReqs(posts[i].ImageID, posts[i].Author)...)
 	}
+	prewarmSigs(reqs) // 画像の署名を 16 個ずつまとめて作る（あとの newPostResponse はキャッシュに当たる）
 	return posts, nil
 }
 
