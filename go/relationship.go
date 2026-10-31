@@ -34,6 +34,25 @@ const pairLockCTE = `WITH pair_lock AS MATERIALIZED (
   )
   `
 
+// 投稿の author を同じ文の中で引いてペアロックを取る。$1=actor, $2=postId。
+// 返す列: author_id と、actor/author のうち users に存在する id の配列（status は active_ids で判定）。
+// 投稿が無い/削除済みなら 0 行。
+const postPairLockSQL = `WITH a AS (
+    SELECT p.author_id FROM posts p JOIN posting_windows w ON w.id = p.posting_window_id WHERE p.id = $2 AND p.deleted_at IS NULL
+  ), pair_lock AS MATERIALIZED (
+    SELECT pg_advisory_xact_lock(hashtextextended(least($1::text, a.author_id::text) || '|' || greatest($1::text, a.author_id::text), 0)) FROM a
+  )
+  SELECT a.author_id,
+    (SELECT count(*) FROM users u WHERE u.id IN ($1, a.author_id)) AS user_count,
+    (SELECT count(*) FROM users u WHERE u.id IN ($1, a.author_id) AND u.status='active') AS active_count
+  FROM a, pair_lock`
+
+type postPairLock struct {
+	AuthorID    string `db:"author_id"`
+	UserCount   int    `db:"user_count"`
+	ActiveCount int    `db:"active_count"`
+}
+
 func beginRelationshipTx(ctx context.Context, db *sqlx.DB, actor, target string) (*sqlx.Tx, error) {
 	if actor == target || target == "" {
 		return nil, NewAPIError(http.StatusBadRequest, "invalid_relationship")
