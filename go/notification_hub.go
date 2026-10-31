@@ -5,10 +5,13 @@ import (
 	"database/sql"
 	"errors"
 	"log"
+	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jmoiron/sqlx"
 )
@@ -18,8 +21,21 @@ const (
 	notificationClockSamples    = 5               // DB 時刻のずれを測る回数。往復が最短だったものを採る
 	notificationClockSyncEach   = 10 * time.Second
 
-	postingWindowChannel = "posting_window_open" // 投稿期間の開始時に管理 API が pg_notify する（payload はリージョン）
+	postingWindowChannel = "posting_window_open" // 投稿期間の開始時に管理 API が pg_notify する（payload は region|id|starts_at の UNIX マイクロ秒）
 )
+
+// notificationNamespace は通知 ID（UUID v5）の名前空間。ID は (投稿期間, ユーザー) で決まるので複数 app・再起動でも同じ
+var notificationNamespace = uuid.MustParse("6f1b8f1e-4c1d-4e8a-9d3e-2a6c0b5e7f10")
+
+func notificationID(windowID, userID string) string {
+	return uuid.NewSHA1(notificationNamespace, []byte(windowID+"|"+userID)).String()
+}
+
+type openedWindow struct {
+	ID       string    `db:"id"`
+	Region   string    `db:"region"`
+	StartsAt time.Time `db:"starts_at"`
+}
 
 // notificationWaiter は SSE で通知を待っている 1 接続
 type notificationWaiter struct {
@@ -42,6 +58,7 @@ type NotificationHub struct {
 	mu             sync.Mutex
 	waiters        map[*notificationWaiter]struct{}
 	ticks          int
+	opened         atomic.Pointer[openedWindow] // NOTIFY で届いた投稿期間。次の poll で posting_windows を読まずに使う
 
 	clockOffset atomic.Int64 // DB 時刻 - アプリ時刻（ns）。接続ごとに clock_timestamp() を DB へ聞かないための補正
 }
@@ -146,9 +163,16 @@ func (h *NotificationHub) listenOnce(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if n.Payload == h.region {
-			h.kick()
+		parts := strings.Split(n.Payload, "|")
+		if parts[0] != h.region {
+			continue
 		}
+		if len(parts) == 3 {
+			if us, err := strconv.ParseInt(parts[2], 10, 64); err == nil {
+				h.opened.Store(&openedWindow{ID: parts[1], Region: parts[0], StartsAt: time.UnixMicro(us)})
+			}
+		}
+		h.kick()
 	}
 }
 
@@ -179,6 +203,7 @@ func (h *NotificationHub) Run(ctx context.Context) {
 }
 
 func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
+	opened := h.opened.Swap(nil)
 	h.mu.Lock()
 	n := len(h.waiters)
 	h.mu.Unlock()
@@ -188,15 +213,16 @@ func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	var window struct {
-		ID       string    `db:"id"`
-		Region   string    `db:"region"`
-		StartsAt time.Time `db:"starts_at"`
-	}
-	err := h.db.GetContext(ctx, &window, `SELECT id, region, starts_at FROM posting_windows WHERE region = $1 AND ended_at IS NULL`, h.region)
-	hasWindow := err == nil
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
+	var window openedWindow
+	hasWindow := true
+	if opened != nil {
+		window = *opened
+	} else {
+		err := h.db.GetContext(ctx, &window, `SELECT id, region, starts_at FROM posting_windows WHERE region = $1 AND ended_at IS NULL`, h.region)
+		hasWindow = err == nil
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 	}
 
 	if hasWindow {
@@ -214,25 +240,18 @@ func (h *NotificationHub) poll(ctx context.Context, tick bool) error {
 			for id := range targets {
 				userIDs = append(userIDs, id)
 			}
-			var rows []struct {
-				UserID string `db:"user_id"`
-				getNotificationsResponse
-			}
-			err := h.db.SelectContext(ctx, &rows, `
-    SELECT n.user_id, n.id, n.posting_window_id, w.region, n.created_at
-    FROM window_notifications n JOIN posting_windows w ON w.id = n.posting_window_id
-    WHERE n.posting_window_id = $1 AND n.user_id = ANY($2) AND w.ended_at IS NULL
-   `, window.ID, userIDs)
-			if err != nil {
+			// 通知の対象は元の INSERT と同じ「リージョンの active な利用者」。行は書かず、ここで作る
+			var alive []string
+			if err := h.db.SelectContext(ctx, &alive, `SELECT id FROM users WHERE id = ANY($1) AND status = 'active' AND region = $2`, userIDs, window.Region); err != nil {
 				return err
 			}
 			h.mu.Lock()
-			for _, row := range rows {
-				for _, w := range targets[row.UserID] {
-					if _, ok := h.waiters[w]; !ok || !row.CreatedAt.After(w.connectedAt) {
+			for _, userID := range alive {
+				for _, w := range targets[userID] {
+					if _, ok := h.waiters[w]; !ok || !window.StartsAt.After(w.connectedAt) {
 						continue
 					}
-					resp := row.getNotificationsResponse
+					resp := getNotificationsResponse{ID: notificationID(window.ID, userID), PostingWindowID: window.ID, Region: window.Region, CreatedAt: window.StartsAt}
 					select {
 					case w.ch <- &resp:
 					default:
