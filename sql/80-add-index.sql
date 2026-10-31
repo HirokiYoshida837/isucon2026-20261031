@@ -31,3 +31,8 @@ CREATE INDEX IF NOT EXISTS idx_posting_windows_local_date ON posting_windows (lo
 -- DB には先に CREATE INDEX CONCURRENTLY で貼る（realmojis 120 万行・comments 55 万行）
 CREATE INDEX IF NOT EXISTS idx_realmojis_post_id_active_cover ON realmojis (post_id, created_at DESC, id DESC) INCLUDE (reactor_id, image_id, reaction_type, replaced_at, deleted_at) WHERE replaced_at IS NULL AND deleted_at IS NULL;
 CREATE INDEX IF NOT EXISTS idx_comments_post_id_active_cover ON comments (post_id, created_at, id) INCLUDE (author_id, body, deleted_at) WHERE deleted_at IS NULL;
+-- 初期化の DELETE ... WHERE created_at > (SELECT created_at FROM initial_data_boundary) を seq scan（3 本で約 2.2 秒・316MB をディスクから読む）から index scan にする（#179）
+-- DB には先に CREATE INDEX CONCURRENTLY で貼る（realmojis 120 万行・posts 62 万行・comments 55 万行）。新しい行は created_at が単調増加で B-tree の末尾に追記される
+CREATE INDEX IF NOT EXISTS idx_realmojis_created_at ON realmojis (created_at);
+CREATE INDEX IF NOT EXISTS idx_posts_created_at ON posts (created_at);
+CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments (created_at);
