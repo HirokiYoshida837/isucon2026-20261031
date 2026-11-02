@@ -1,0 +1,436 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISUReal 採点対象とAPIの対応表</title>
+<style>
+/* layout: 1カラムの読み物。TL;DR → 流れの図 → 対応表 → 採点されないAPI → 気づき */
+:root {
+  --bg: #f6f7f9;
+  --surface: #ffffff;
+  --fg: #1b2230;
+  --muted: #5d6779;
+  --line: #dde1e8;
+  --accent: #2446c9;
+  --accent-soft: #e4e9fb;
+  --t20: #b3261e;
+  --t10: #c2570c;
+  --t5: #8a6a00;
+  --t3: #1f7a4d;
+  --t2: #2446c9;
+  --t1: #5d6779;
+  --warn-soft: #fff4d6;
+  --font: "Hiragino Sans", "Noto Sans JP", "Yu Gothic", system-ui, sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12161d; --surface: #1a202a; --fg: #e6e9ef; --muted: #9aa4b6; --line: #2b3342;
+    --accent: #8ea4ff; --accent-soft: #232c4d;
+    --t20: #ff8f86; --t10: #ffa96b; --t5: #e6c04d; --t3: #6fd3a0; --t2: #8ea4ff; --t1: #9aa4b6;
+    --warn-soft: #3a3115; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #12161d; --surface: #1a202a; --fg: #e6e9ef; --muted: #9aa4b6; --line: #2b3342;
+  --accent: #8ea4ff; --accent-soft: #232c4d;
+  --t20: #ff8f86; --t10: #ffa96b; --t5: #e6c04d; --t3: #6fd3a0; --t2: #8ea4ff; --t1: #9aa4b6;
+  --warn-soft: #3a3115; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.7;
+  padding-block: 32px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 1040px; margin: 0 auto; display: flex; flex-direction: column; gap: 36px; }
+h1 { font-size: 26px; line-height: 1.3; margin: 0; text-wrap: balance; }
+h2 { font-size: 18px; margin: 0 0 12px; text-wrap: balance; }
+p { margin: 0; }
+a { color: var(--accent); }
+code, .mono { font-family: var(--mono); font-size: 12.5px; }
+.eyebrow { font-size: 12px; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.tldr { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.tldr strong { font-size: 15px; }
+.meta { color: var(--muted); font-size: 12.5px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; }
+.stat { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+.stat b { display: block; font-size: 22px; font-variant-numeric: tabular-nums; }
+.stat span { color: var(--muted); font-size: 12px; }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; }
+.scroll svg { display: block; min-width: 880px; width: 100%; height: auto; }
+svg text { fill: var(--fg); font-family: var(--font); }
+svg .sub { fill: var(--muted); font-size: 11px; }
+svg .node { fill: var(--bg); stroke: var(--line); stroke-width: 1.2; }
+svg .hot { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.2; }
+svg .arrow { stroke: var(--muted); stroke-width: 1.4; fill: none; }
+svg .head { fill: var(--muted); }
+table { border-collapse: collapse; width: 100%; min-width: 860px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--line); }
+th { font-size: 12px; color: var(--muted); font-weight: 600; background: var(--bg); position: sticky; top: 0; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.cat td { background: var(--accent-soft); font-weight: 700; font-size: 12.5px; padding-block: 6px; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pt { display: inline-block; min-width: 38px; text-align: center; border-radius: 6px; padding: 1px 6px; font-weight: 700; font-variant-numeric: tabular-nums; border: 1.5px solid currentColor; }
+.pt.p20 { color: var(--t20); } .pt.p10 { color: var(--t10); } .pt.p5 { color: var(--t5); }
+.pt.p3 { color: var(--t3); } .pt.p2 { color: var(--t2); } .pt.p1 { color: var(--t1); }
+.api { display: flex; flex-direction: column; gap: 3px; }
+.api code { word-break: break-all; }
+.m { font-weight: 700; margin-right: 4px; }
+.nr { display: flex; flex-direction: column; gap: 3px; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.nr span { font-size: 12.5px; }
+.slow { color: var(--t20); font-weight: 700; }
+.tag { display: inline-block; font-size: 11px; border-radius: 4px; padding: 0 6px; background: var(--warn-soft); }
+.note { color: var(--muted); font-size: 12.5px; }
+.cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.card { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.card b { font-size: 14px; }
+ul { margin: 0; padding-left: 1.2em; }
+li { margin-block: 2px; }
+.theme { align-self: flex-end; background: var(--surface); color: var(--fg); border: 1px solid var(--line); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; }
+.theme:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">ISUCON2026 / ISUReal</div>
+    <h1>採点対象 30 項目が、どの API で加点されるか</h1>
+  </header>
+
+  <section class="tldr" aria-label="TL;DR">
+    <strong>TL;DR</strong>
+    <p>当日マニュアルの採点表 30 項目を、API に対応づけた表です。</p>
+    <p>対応づけの根拠は、go/server.go のルーティングと、NewRelic の直近 24 時間の実測です。</p>
+    <p>配点が大きく、重い API は <b>POST /api/posts</b>・<b>GET /api/feeds/:feed</b>・<b>GET /api/me/export</b> です。</p>
+    <p class="meta">「確度: 推定」の行は、ベンチのコードが見えないため、マニュアルの文言から対応づけています。</p>
+  </section>
+
+  <section class="stats" aria-label="数字">
+    <div class="stat"><b>30</b><span>採点項目（配点 1〜20）</span></div>
+    <div class="stat"><b>42</b><span>ルート（go/server.go、管理者用 5 本を含む）</span></div>
+    <div class="stat"><b>×1.5</b><span>europe・america の倍率</span></div>
+    <div class="stat"><b>20</b><span>エクスポート 1 回の配点（最大）</span></div>
+  </section>
+
+  <section>
+    <h2>1 日の遊ばれ方と、加点の流れ</h2>
+    <div class="scroll">
+      <svg viewBox="0 0 960 330" role="img" aria-label="投稿期間の開始から閲覧、反応、Memories、エクスポートまでの流れ">
+        <defs>
+          <marker id="ah" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="7" markerHeight="7" orient="auto">
+            <path d="M0 0 L8 4 L0 8 z" class="head"/>
+          </marker>
+        </defs>
+
+        <rect class="node" x="14" y="24" width="150" height="74" rx="8"/>
+        <text x="26" y="48" font-size="13" font-weight="700">① 投稿期間の開始</text>
+        <text x="26" y="68" class="sub">POST /api/admin/posting-window</text>
+        <text x="26" y="86" class="sub">配点なし（ベンチが実行）</text>
+
+        <rect class="hot" x="190" y="24" width="150" height="74" rx="8"/>
+        <text x="202" y="48" font-size="13" font-weight="700">② 通知を受ける</text>
+        <text x="202" y="68" class="sub">GET /api/notifications</text>
+        <text x="202" y="86" class="sub">SSE　1点</text>
+
+        <rect class="hot" x="366" y="24" width="150" height="74" rx="8"/>
+        <text x="378" y="48" font-size="13" font-weight="700">③ 写真を投稿する</text>
+        <text x="378" y="68" class="sub">POST /api/posts</text>
+        <text x="378" y="86" class="sub">加点は④で行われる</text>
+
+        <rect class="hot" x="542" y="24" width="180" height="74" rx="8"/>
+        <text x="554" y="48" font-size="13" font-weight="700">④ 友達フィードを検証</text>
+        <text x="554" y="68" class="sub">GET /api/feeds/friends（推定）</text>
+        <text x="554" y="86" class="sub">10点 / 最後の期間は20点</text>
+
+        <rect class="hot" x="748" y="24" width="198" height="74" rx="8"/>
+        <text x="760" y="48" font-size="13" font-weight="700">⑤ 閲覧する（上限あり）</text>
+        <text x="760" y="68" class="sub">feeds 20回 / images 4回</text>
+        <text x="760" y="86" class="sub">posts 8回 / users 4回 など</text>
+
+        <path class="arrow" d="M164 61 H188" marker-end="url(#ah)"/>
+        <path class="arrow" d="M340 61 H364" marker-end="url(#ah)"/>
+        <path class="arrow" d="M516 61 H540" marker-end="url(#ah)"/>
+        <path class="arrow" d="M722 61 H746" marker-end="url(#ah)"/>
+
+        <rect class="hot" x="14" y="150" width="210" height="74" rx="8"/>
+        <text x="26" y="174" font-size="13" font-weight="700">⑥ 反応する（各5回まで）</text>
+        <text x="26" y="194" class="sub">POST realmojis　5点</text>
+        <text x="26" y="212" class="sub">POST comments　3点</text>
+
+        <rect class="hot" x="262" y="150" width="210" height="74" rx="8"/>
+        <text x="274" y="174" font-size="13" font-weight="700">⑦ 人間関係を動かす</text>
+        <text x="274" y="194" class="sub">friend-requests / follows / blocks</text>
+        <text x="274" y="212" class="sub">relationships / users 検索　1〜2点</text>
+
+        <rect class="hot" x="510" y="150" width="210" height="74" rx="8"/>
+        <text x="522" y="174" font-size="13" font-weight="700">⑧ プロフィールを直す</text>
+        <text x="522" y="194" class="sub">PATCH /api/me　1点</text>
+        <text x="522" y="212" class="sub">PUT・DELETE /api/me/profile-image　3点</text>
+
+        <rect class="hot" x="758" y="150" width="188" height="74" rx="8"/>
+        <text x="770" y="174" font-size="13" font-weight="700">⑨ 過去を振り返る</text>
+        <text x="770" y="194" class="sub">GET /api/memories　1〜3点</text>
+        <text x="770" y="212" class="sub">GET /api/memories/:date　2点</text>
+
+        <rect class="hot" x="262" y="262" width="210" height="54" rx="8"/>
+        <text x="274" y="286" font-size="13" font-weight="700">⑩ エクスポート</text>
+        <text x="274" y="304" class="sub">GET /api/me/export　20点</text>
+
+        <rect class="hot" x="510" y="262" width="210" height="54" rx="8"/>
+        <text x="522" y="286" font-size="13" font-weight="700">⑪ 退会</text>
+        <text x="522" y="304" class="sub">POST /api/me/account-deletion　5点</text>
+
+        <path class="arrow" d="M846 98 V124 H119 V148" marker-end="url(#ah)"/>
+        <path class="arrow" d="M224 187 H260" marker-end="url(#ah)"/>
+        <path class="arrow" d="M472 187 H508" marker-end="url(#ah)"/>
+        <path class="arrow" d="M720 187 H756" marker-end="url(#ah)"/>
+        <path class="arrow" d="M852 224 V244 H367 V260" marker-end="url(#ah)"/>
+        <path class="arrow" d="M472 289 H508" marker-end="url(#ah)"/>
+        <text x="14" y="318" class="sub">画像の取得（GET /api/images/:imageId　2点）は ⑤ と ⑨ と ⑩ のどこからでも呼ばれる</text>
+      </svg>
+    </div>
+    <p class="meta" style="margin-top:8px">流れの順序は、マニュアルの説明と API の依存関係からの推定です。ベンチ内部の実行順とは限りません。</p>
+  </section>
+
+  <section>
+    <h2>採点対象 → API 対応表</h2>
+    <p class="meta" style="margin-bottom:8px">NewRelic は appName=isucon2026、直近 24 時間、3 台合算です。ベンチ約 3 走行ぶん（initialize 3 回）と手動確認を含みます。</p>
+    <div class="scroll">
+      <table id="map">
+        <thead>
+          <tr>
+            <th class="num">配点</th>
+            <th>採点対象</th>
+            <th>API</th>
+            <th class="num">NewRelic（呼出 / 平均 / p95）</th>
+            <th>上限・メモ</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>配点がつかない API</h2>
+    <p class="meta" style="margin-bottom:8px">呼ばれているが、採点表に項目がない API です。壊さずに軽くする対象になります。</p>
+    <div class="scroll">
+      <table id="unscored">
+        <thead>
+          <tr><th>API</th><th class="num">NewRelic（呼出 / 平均 / p95）</th><th>役割</th></tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+
+  <section>
+    <h2>気づき</h2>
+    <div class="cols">
+      <div class="card">
+        <b>投稿は加点の入口で、一番遅い</b>
+        <ul>
+          <li>POST /api/posts は平均 2.1 秒、p95 5.1 秒です。</li>
+          <li>友達フィード 10 点は、投稿期間が終わる前の検証が条件です。</li>
+          <li>遅いと、期間内に検証へ進めず取りこぼします。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <b>画像とフィードが呼出数の中心</b>
+        <ul>
+          <li>images は 4,627 回、feeds は 2,553 回です。</li>
+          <li>配点は 2 点と 1 点で、上限があります。</li>
+          <li>上限を超えた呼出は加点されません。速さの効果は、1 走行で回せる周回数に出ます。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <b>エクスポートは 1 回 20 点</b>
+        <ul>
+          <li>74 回で平均 1.3 秒、p95 3.6 秒です。</li>
+          <li>履歴と画像が初期データと違うと FAIL です。</li>
+          <li>高速化するときは、結果を変えないことが最優先です。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <b>通知は SSE で時間が長いだけ</b>
+        <ul>
+          <li>平均 15.6 秒の合計時間は、接続を保っている時間です。</li>
+          <li>NewRelic の合計時間ランキングでは 1 位に出ますが、遅さを示しません。</li>
+          <li>見るときは除外して順位を読みます。</li>
+        </ul>
+      </div>
+      <div class="card">
+        <b>NewRelic で分けられない行</b>
+        <ul>
+          <li>friend-requests/:action は accept・reject・cancel を合算します。</li>
+          <li>memories は月単位と前回確認を合算します。</li>
+          <li>DELETE /api/blocks は 24 時間で 0 回でした。</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <section class="meta">
+    <p>出典</p>
+    <ul>
+      <li><a href="https://gist.github.com/whywaita/17f3ab1a8c1b7585c571f4f8afe5f531">当日マニュアル（採点表・スコア計算）</a></li>
+      <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/server.go">go/server.go（ルーティング）</a></li>
+      <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/docs/endpoints.md">docs/endpoints.md（エンドポイント一覧）</a></li>
+      <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/docs/scoring.md">docs/scoring.md（スコアとベンチ）</a></li>
+      <li>NewRelic アカウント 8667760（チーム競技用）。取得日 2026-10-31</li>
+    </ul>
+  </section>
+
+  <button class="theme" id="themeBtn" type="button">ライト / ダーク切替</button>
+</main>
+
+<script>
+// NewRelic 直近24時間。key = "METHOD path"。[呼出数, 平均ms, p95ms|null]
+var NR = {
+  "GET /api/notifications": [673, 15602, 60001],
+  "GET /api/images/:imageId": [4627, 345, 1344],
+  "POST /api/posts": [501, 2097, 5063],
+  "GET /api/feeds/:feed": [2553, 318, 1391],
+  "GET /api/memories": [1291, 422, 1141],
+  "POST /api/friend-requests": [546, 785, 2031],
+  "POST /api/auth/login": [2813, 133, 766],
+  "POST /api/friend-requests/:requestId/:action": [327, 624, 2469],
+  "POST /api/auth/register": [147, 1317, 6125],
+  "GET /api/posting-window/current": [557, 261, 1266],
+  "GET /api/posts/me/current": [463, 253, 820],
+  "PUT /api/follows/:userId": [72, 1561, 5563],
+  "GET /api/users": [231, 450, 1141],
+  "GET /api/me/export": [74, 1314, 3609],
+  "POST /api/admin/posting-window": [54, 1632, 3219],
+  "GET /api/relationships/:kind": [487, 154, 508],
+  "GET /api/posts/:postId": [451, 160, 363],
+  "POST /api/posts/:postId/realmojis": [85, 399, 1164],
+  "POST /api/posts/:postId/comments": [95, 334, 1148],
+  "POST /api/auth/logout": [187, 158, 820],
+  "GET /api/users/:userId": [249, 110, 248],
+  "PUT /api/me/profile-image": [235, 117, 336],
+  "GET /api/posts/:postId/realmojis": [135, 174, 381],
+  "PATCH /api/posts/:postId": [48, 453, 1359],
+  "GET /api/memories/:date": [166, 112, 508],
+  "GET /api/posts/:postId/comments": [111, 145, 326],
+  "POST /api/me/account-deletion": [9, 1535, 3528],
+  "PUT /api/blocks/:userId": [20, 583, 1734],
+  "DELETE /api/posts/:postId": [16, 725, 2568],
+  "GET /api/me": [74, 141, 503],
+  "DELETE /api/comments/:commentId": [21, 68, null],
+  "DELETE /api/realmojis/:realMojiId": [15, 96, null],
+  "PATCH /api/me": [7, 183, null],
+  "DELETE /api/follows/:userId": [3, 599, null],
+  "DELETE /api/friendships/:userId": [3, 50, null],
+  "DELETE /api/me/profile-image": [1, 660, null],
+  "DELETE /api/blocks/:userId": [0, null, null],
+  "POST /api/initialize": [3, 1538, null]
+};
+
+// [配点, 採点対象, [API...], 上限・メモ, 確度]
+var GROUPS = [
+  ["投稿とフィード（配点が大きい）", [
+    [20, "投稿後の友達フィードの検証通過（最後の投稿期間）", ["POST /api/posts", "GET /api/feeds/:feed"], "ユーザーごと・投稿期間ごとに 1 回。通常の 10 点に代えて 20 点。", "推定"],
+    [10, "投稿後の友達フィードの検証通過（通常の投稿期間）", ["POST /api/posts", "GET /api/feeds/:feed"], "投稿受理後、期間終了前に検証成功が条件。feed は friends と読める。", "推定"],
+    [1, "フィードの閲覧", ["GET /api/feeds/:feed"], "1 期間・1 人あたり 20 回まで。feed は public / following / friends / friends-of-friends。", "確実"],
+    [1, "投稿詳細の取得", ["GET /api/posts/:postId", "GET /api/posts/me/current"], "1 期間・1 人あたり 8 回まで。投稿直後の確認は上限とは別枠。", "推定"],
+    [1, "投稿のキャプションの変更", ["PATCH /api/posts/:postId"], "", "確実"]
+  ]],
+  ["画像", [
+    [2, "画像の取得", ["GET /api/images/:imageId"], "1 期間・1 人あたり 4 回まで。署名の検証を保つ。HMAC を 1000 回まわす実装。", "確実"],
+    [2, "過去の投稿の画像の取得", ["GET /api/images/:imageId"], "Memories やエクスポートから辿る画像。API は同じ。", "推定"],
+    [3, "プロフィール画像の変更・削除", ["PUT /api/me/profile-image", "DELETE /api/me/profile-image"], "", "確実"]
+  ]],
+  ["RealMoji とコメント", [
+    [5, "RealMoji の送信", ["POST /api/posts/:postId/realmojis"], "1 期間・1 人あたり 5 回まで。閲覧権限のない投稿への受理は FAIL。", "確実"],
+    [3, "コメントの投稿", ["POST /api/posts/:postId/comments"], "1 期間・1 人あたり 5 回まで。コメント権限のない投稿への受理は FAIL。", "確実"],
+    [1, "RealMoji・コメント一覧の取得", ["GET /api/posts/:postId/realmojis", "GET /api/posts/:postId/comments"], "2 つ合計で 1 期間・1 人あたり 8 回まで。", "確実"],
+    [1, "RealMoji・コメントの削除", ["DELETE /api/realmojis/:realMojiId", "DELETE /api/comments/:commentId"], "", "確実"]
+  ]],
+  ["通知・Memories・エクスポート", [
+    [1, "通知の受信", ["GET /api/notifications"], "SSE。バッファリングとタイムアウトに注意。", "確実"],
+    [1, "Memories で前回の投稿を確認", ["GET /api/memories"], "月指定なしの先頭取得と読める。", "推定"],
+    [3, "Memories を月単位で閲覧", ["GET /api/memories"], "?month= を付ける。取得件数でなく、一連の確認の成功回数を数える。", "確実"],
+    [2, "Memories を日付単位で閲覧", ["GET /api/memories/:date"], "履歴と画像が初期データと違うと FAIL。", "確実"],
+    [20, "エクスポート", ["GET /api/me/export"], "一連の確認の成功回数を数える。履歴と画像が初期データと違うと FAIL。", "確実"]
+  ]],
+  ["ユーザーとプロフィール", [
+    [1, "プロフィールの閲覧", ["GET /api/users/:userId"], "1 期間・1 人あたり 4 回まで。", "確実"],
+    [2, "ユーザーの検索", ["GET /api/users"], "", "確実"],
+    [1, "表示名・自己紹介の変更", ["PATCH /api/me"], "", "確実"],
+    [5, "退会", ["POST /api/me/account-deletion"], "リージョンは加点時点の所属で決まる。", "確実"]
+  ]],
+  ["友達・フォロー・ブロック", [
+    [2, "友達申請の送信", ["POST /api/friend-requests"], "", "確実"],
+    [2, "友達申請の承認", ["POST /api/friend-requests/:requestId/:action"], "action=accept。", "確実"],
+    [1, "友達申請の拒否・取り下げ", ["POST /api/friend-requests/:requestId/:action"], "action=reject / cancel。", "確実"],
+    [1, "友達の解除", ["DELETE /api/friendships/:userId"], "", "確実"],
+    [1, "友達・フォロー・フォロワーの一覧取得", ["GET /api/relationships/:kind"], "kind=friends / following / followers（ほかに incoming-requests / outgoing-requests）。", "確実"],
+    [1, "フォロー", ["PUT /api/follows/:userId"], "", "確実"],
+    [1, "フォローの解除", ["DELETE /api/follows/:userId"], "", "確実"],
+    [1, "ブロック", ["PUT /api/blocks/:userId"], "", "確実"],
+    [1, "ブロックの解除", ["DELETE /api/blocks/:userId"], "NewRelic では 24 時間で 0 回。", "確実"]
+  ]]
+];
+
+var UNSCORED = [
+  ["POST /api/initialize", "ベンチが最初に呼ぶ。失敗すると即 FAIL。"],
+  ["POST /api/auth/login", "全ユーザーが最初に呼ぶ。呼出数が最多クラス。初期ユーザーが 401 になると FAIL。"],
+  ["POST /api/auth/logout", "ログアウト。"],
+  ["POST /api/auth/register", "新規登録。"],
+  ["GET /api/me", "自分の情報の取得。"],
+  ["GET /api/posting-window/current", "現在の投稿期間の取得。"],
+  ["POST /api/admin/posting-window", "管理者が投稿期間を開始し、通知を作る。ベンチが呼ぶ。"],
+  ["DELETE /api/posts/:postId", "投稿の削除。削除成功から 5 秒後に画像が 403 になる必要がある。"]
+];
+
+function fmt(n) { return n.toLocaleString("en-US"); }
+
+function nrCell(api) {
+  var d = NR[api];
+  if (!d) return '<span class="note">データなし</span>';
+  if (d[0] === 0) return '<span class="note">0 回</span>';
+  var slow = d[1] >= 1000 && api !== "GET /api/notifications";
+  var cls = slow ? ' class="slow"' : '';
+  var p95 = d[2] === null ? '–' : fmt(d[2]) + 'ms';
+  var sse = api === "GET /api/notifications" ? ' <span class="tag">SSE</span>' : '';
+  return '<span' + cls + '>' + fmt(d[0]) + ' / ' + fmt(d[1]) + 'ms / ' + p95 + '</span>' + sse;
+}
+
+function apiCell(api) {
+  var i = api.indexOf(" ");
+  return '<code><span class="m">' + api.slice(0, i) + '</span>' + api.slice(i + 1) + '</code>';
+}
+
+function tier(p) { return p >= 20 ? "p20" : p >= 10 ? "p10" : p >= 5 ? "p5" : p >= 3 ? "p3" : p >= 2 ? "p2" : "p1"; }
+
+(function () {
+  var tb = document.querySelector("#map tbody"), h = "";
+  GROUPS.forEach(function (g) {
+    h += '<tr class="cat"><td colspan="5">' + g[0] + '</td></tr>';
+    g[1].forEach(function (r) {
+      var apis = r[2].map(apiCell).map(function (a) { return '<div>' + a + '</div>'; }).join("");
+      var nrs = r[2].map(function (a) { return nrCell(a); }).map(function (a) { return '<span>' + a + '</span>'; }).join("");
+      var guess = r[4] === "推定" ? ' <span class="tag">確度: 推定</span>' : '';
+      h += '<tr><td class="num"><span class="pt ' + tier(r[0]) + '">' + r[0] + '</span></td>' +
+        '<td>' + r[1] + guess + '</td>' +
+        '<td><div class="api">' + apis + '</div></td>' +
+        '<td class="num"><div class="nr">' + nrs + '</div></td>' +
+        '<td class="note">' + r[3] + '</td></tr>';
+    });
+  });
+  tb.innerHTML = h;
+
+  var ub = document.querySelector("#unscored tbody"), u = "";
+  UNSCORED.forEach(function (r) {
+    u += '<tr><td>' + apiCell(r[0]) + '</td><td class="num"><div class="nr"><span>' + nrCell(r[0]) + '</span></div></td><td class="note">' + r[1] + '</td></tr>';
+  });
+  ub.innerHTML = u;
+
+  document.getElementById("themeBtn").addEventListener("click", function () {
+    var r = document.documentElement;
+    var dark = r.getAttribute("data-theme") === "dark" ||
+      (!r.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    r.setAttribute("data-theme", dark ? "light" : "dark");
+  });
+})();
+</script>
