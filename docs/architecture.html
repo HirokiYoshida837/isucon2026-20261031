@@ -1,0 +1,456 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ISUReal 競技環境</title>
+<style>
+/* Layout: 1 枚の縦積み。図は全幅、文章は 1 行 1 文の短い列。 */
+:root {
+  --bg: #f2f5f7; --surface: #ffffff; --band: #e3eaf0; --ink: #14212b; --muted: #52616d; --line: #b9c5ce;
+  --lan: #1a66c9; --wan: #c8480a;
+  --sans: "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP", "Yu Gothic", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f161c; --surface: #172129; --band: #1f2c36; --ink: #e6edf2; --muted: #9dabb6; --line: #3a4a56;
+    --lan: #4b93e6; --wan: #e0701f; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f161c; --surface: #172129; --band: #1f2c36; --ink: #e6edf2; --muted: #9dabb6; --line: #3a4a56;
+  --lan: #4b93e6; --wan: #e0701f; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.75 var(--sans); }
+.wrap { max-width: 1120px; margin: 0 auto; padding-block: 36px 64px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: grid; gap: 40px; }
+.wrap > * { min-width: 0; }
+header { display: grid; gap: 4px; }
+.eyebrow { font: 12px/1.5 var(--mono); color: var(--muted); }
+h1 { margin: 0; font-size: 30px; line-height: 1.3; letter-spacing: .01em; text-wrap: balance; }
+h2 { margin: 0 0 10px; font-size: 19px; line-height: 1.4; text-wrap: balance; }
+section { display: grid; gap: 14px; }
+section > * { min-width: 0; }
+.lines { margin: 0; padding: 0; list-style: none; max-width: 46em; }
+.lines li { padding-block: 1px; }
+.tldr { background: var(--surface); border: 1px solid var(--line); border-radius: 6px; padding: 16px 20px; }
+.tldr h2 { font-size: 13px; letter-spacing: .08em; color: var(--muted); margin-bottom: 6px; }
+.tldr .lines { font-size: 16px; max-width: none; }
+b.wan, b.lan { white-space: nowrap; }
+b.wan { color: var(--wan); } b.lan { color: var(--lan); }
+code { font: 0.92em var(--mono); }
+a { color: inherit; text-underline-offset: 2px; }
+a:focus-visible { outline: 2px solid var(--lan); outline-offset: 2px; }
+figure { margin: 0; display: grid; gap: 8px; }
+figure > * { min-width: 0; }
+.scroll { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 6px; }
+svg.diagram { display: block; width: 100%; min-width: 900px; height: auto; color: var(--ink); }
+figcaption { font-size: 13px; line-height: 1.7; color: var(--muted); max-width: 60em; }
+
+/* SVG */
+.t  { fill: var(--ink); font-size: 12.5px; }
+.tb { fill: var(--ink); font-size: 13px; font-weight: 700; }
+.h  { fill: var(--ink); font-size: 15px; font-weight: 700; }
+.s  { fill: var(--muted); font-size: 11.5px; }
+.m  { font-family: var(--mono); }
+.mid { text-anchor: middle; } .end { text-anchor: end; }
+.tw { fill: var(--wan); font-size: 12.5px; font-weight: 600; }
+.tl { fill: var(--lan); font-size: 12.5px; font-weight: 600; }
+.rw { fill: var(--wan); font-size: 18px; font-weight: 700; }
+.rl { fill: var(--lan); font-size: 18px; font-weight: 700; }
+.box { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.inner { fill: var(--bg); stroke: var(--line); }
+.band { fill: var(--band); stroke: var(--line); stroke-width: 1.2; }
+.region { fill: none; stroke: var(--line); stroke-dasharray: 5 4; }
+.wire { fill: none; stroke: var(--ink); stroke-width: 1.4; }
+.dash { stroke-dasharray: 5 4; }
+.life { stroke: var(--line); stroke-dasharray: 3 4; }
+.div { stroke: var(--line); }
+.wirew { fill: none; stroke: var(--wan); stroke-width: 3; }
+.wirel { fill: none; stroke: var(--lan); stroke-width: 3; }
+.thinw { fill: none; stroke: var(--wan); stroke-width: 1.8; }
+.lock { fill: var(--wan); }
+.ai { fill: var(--ink); } .aw { fill: var(--wan); } .al { fill: var(--lan); }
+
+/* 下限チャート */
+.legend { display: flex; flex-wrap: wrap; gap: 6px 20px; padding: 14px 18px 0; font-size: 13px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; }
+.key { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+table { border-collapse: collapse; width: 100%; font-size: 13.5px; font-variant-numeric: tabular-nums; }
+th, td { padding: 9px 14px; text-align: left; border-top: 1px solid var(--line); vertical-align: top; }
+thead th { border-top: 0; font-size: 12px; font-weight: 600; color: var(--muted); }
+.floor { min-width: 720px; }
+.floor td.bars { width: 58%; }
+.bar-row { display: grid; grid-template-columns: 1fr 74px; align-items: center; gap: 8px; height: 20px; }
+.bar { display: block; height: 10px; border-radius: 0 4px 4px 0; min-width: 3px; }
+.bar.a { background: var(--lan); } .bar.e { background: var(--wan); }
+.val { text-align: right; }
+.plain { min-width: 620px; background: var(--surface); }
+.two { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 16px 32px; }
+.two > * { min-width: 0; }
+h3 { margin: 0 0 4px; font-size: 14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <div class="eyebrow">ISUCON2026 · isucon2026-1031 · 2026-10-31 10:27 JST 時点（リファレンス実装のまま）</div>
+  <h1>ISUReal 競技環境</h1>
+</header>
+
+<section class="tldr">
+  <h2>TL;DR</h2>
+  <ul class="lines">
+    <li>写真 SNS の ISUReal を、地域固定の App 3 台と共有 DB 1 台で動かしている。</li>
+    <li>全通信が Router を通り、DB までの往復は asia1 が <b class="lan">1.2 ms</b>、europe1 と america1 が <b class="wan">101 ms</b>。</li>
+    <li>スコア倍率 1.5 の 2 地域が、いちばん遅い経路に乗っている。</li>
+    <li>App 同士は通信しない。共有する状態はすべて asia2 の PostgreSQL にある。</li>
+  </ul>
+</section>
+
+<section>
+  <h2>全体構成</h2>
+  <figure>
+    <div class="scroll">
+    <svg class="diagram" viewBox="0 0 1120 576" role="img" aria-label="全リクエストが Router を経由して地域ごとの App に届き、App から asia2 の PostgreSQL への SQL も Router を経由する構成図。europe1 と america1 から DB までは往復 101 ミリ秒、asia1 からは 1.2 ミリ秒。">
+      <defs>
+        <marker id="arI" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ai" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="arW" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4.4" markerHeight="4.4" orient="auto-start-reverse"><path class="aw" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="arL" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4.4" markerHeight="4.4" orient="auto-start-reverse"><path class="al" d="M0 0 10 5 0 10z"/></marker>
+        <g id="appInner">
+          <rect class="box" x="0" y="300" width="244" height="230" rx="6"/>
+          <rect class="inner" x="14" y="334" width="132" height="44" rx="4"/>
+          <text class="tb mid m" x="80" y="352">nginx :80</text>
+          <text class="s mid" x="80" y="369">静的は直接返す</text>
+          <path class="wire" d="M100 378V398" marker-end="url(#arI)"/>
+          <text class="s m" x="108" y="393">/api/</text>
+          <rect class="inner" x="14" y="398" width="216" height="44" rx="4"/>
+          <text class="tb mid m" x="122" y="416">isureal :8080</text>
+          <text class="s mid" x="122" y="433">Go · Echo · DB 接続は最大 30</text>
+          <path class="wire" d="M60 442V466" marker-end="url(#arI)"/>
+          <text class="s m" x="68" y="458">stdout → journald</text>
+          <rect class="inner" x="14" y="466" width="216" height="38" rx="4"/>
+          <text class="tb mid m" x="122" y="482">isureal-guard</text>
+          <text class="s mid" x="122" y="498">攻撃を検知して DB へ BAN を書く</text>
+        </g>
+      </defs>
+
+      <!-- リージョン枠 -->
+      <rect class="region" x="16" y="268" width="260" height="298" rx="8"/>
+      <rect class="region" x="292" y="268" width="260" height="298" rx="8"/>
+      <rect class="region" x="568" y="268" width="536" height="298" rx="8"/>
+      <text class="s mid" x="146" y="558">america リージョン</text>
+      <text class="s mid" x="422" y="558">europe リージョン</text>
+      <text class="s mid" x="836" y="558">asia リージョン（asia1 と asia2 は同一扱い）</text>
+
+      <!-- クライアント -->
+      <rect class="box" x="380" y="14" width="360" height="52" rx="6"/>
+      <text class="tb mid" x="560" y="36">ベンチマーカー / ブラウザ</text>
+      <text class="s mid" x="560" y="55">宛先はすべて Router の :8080</text>
+      <path class="wire" d="M560 66V112" marker-end="url(#arI)"/>
+      <text class="s" x="572" y="88"><tspan class="m">X-Country-Code</tspan> で転送先が決まる</text>
+      <text class="s" x="572" y="104"><tspan class="m">X-Client-IP</tspan> はそのまま App へ届く</text>
+
+      <!-- Router -->
+      <rect class="band" x="12" y="112" width="1096" height="150" rx="6"/>
+      <text class="h" x="28" y="136">Router</text>
+      <text class="s" x="94" y="136">運営管理 · c6in.large · 地域別転送 · 遅延と帯域制限</text>
+      <text class="s end" x="1092" y="136">ログイン・設定変更・迂回は禁止</text>
+      <g>
+        <rect class="box" x="24" y="146" width="244" height="44" rx="4"/>
+        <text class="t mid m" x="146" y="164">US · CA · MX</text><text class="s mid" x="146" y="181">→ america1</text>
+        <rect class="box" x="300" y="146" width="244" height="44" rx="4"/>
+        <text class="t mid m" x="422" y="164">GB · DE · FR</text><text class="s mid" x="422" y="181">→ europe1</text>
+        <rect class="box" x="576" y="146" width="244" height="44" rx="4"/>
+        <text class="t mid m" x="698" y="164">JP · KR · CN · AU</text><text class="s mid" x="698" y="181">→ asia1（ヘッダー省略時は JP）</text>
+        <rect class="box dash" x="852" y="146" width="244" height="44" rx="4"/>
+        <text class="t mid" x="974" y="164">国別転送の対象外</text><text class="s mid" x="974" y="181">App からの SQL だけが届く</text>
+      </g>
+      <text class="tw mid" x="580" y="213">App → DB の SQL もここを通る · リージョン間は遅延と帯域制限あり</text>
+      <text class="tl mid" x="845" y="239">同一リージョン</text>
+
+      <!-- HTTP -->
+      <text class="s end m" x="116" y="290">HTTP</text>
+      <text class="s end m" x="392" y="290">HTTP</text>
+      <text class="s end m" x="668" y="290">HTTP</text>
+
+      <!-- App -->
+      <use href="#appInner" transform="translate(24 8)"/>
+      <use href="#appInner" transform="translate(300 8)"/>
+      <use href="#appInner" transform="translate(576 8)"/>
+      <text class="h" x="38" y="330">america1</text><text class="tb end" x="254" y="330">倍率 ×1.5</text>
+      <text class="h" x="314" y="330">europe1</text><text class="tb end" x="530" y="330">倍率 ×1.5</text>
+      <text class="h" x="590" y="330">asia1</text><text class="tb end" x="806" y="330">倍率 ×1</text>
+      <text class="s mid m" x="146" y="528">c7i.large · 192.168.3.10</text>
+      <text class="s mid m" x="422" y="528">c7i.large · 192.168.2.10</text>
+      <text class="s mid m" x="698" y="528">c5.large · 192.168.1.10</text>
+
+      <path class="wire" d="M124 262V342" marker-end="url(#arI)"/>
+      <path class="wire" d="M400 262V342" marker-end="url(#arI)"/>
+      <path class="wire" d="M676 262V342" marker-end="url(#arI)"/>
+
+      <!-- SQL の経路 -->
+      <path class="wirew" d="M460 406V222"/>
+      <path class="wirew" d="M184 406V222H994V306" marker-end="url(#arW)"/>
+      <path class="wirel" d="M736 406V244H954V306" marker-end="url(#arL)"/>
+      <text class="s" x="192" y="280">DB まで往復</text><text class="rw" x="192" y="299">101 ms</text>
+      <text class="s" x="468" y="280">DB まで往復</text><text class="rw" x="468" y="299">101 ms</text>
+      <text class="s" x="744" y="280">DB まで往復</text><text class="rl" x="744" y="299">1.2 ms</text>
+
+      <!-- DB -->
+      <rect class="box" x="852" y="308" width="244" height="230" rx="6"/>
+      <text class="h" x="866" y="330">asia2</text>
+      <text class="tb end" x="1082" y="330">PostgreSQL 16</text>
+      <g class="m">
+        <text class="s" x="866" y="350">users · login_sessions</text>
+        <text class="s" x="866" y="367">posts · comments · realmojis</text>
+        <text class="s" x="866" y="384">friendships · follows</text>
+        <text class="s" x="866" y="401">friend_requests</text>
+        <text class="s" x="866" y="418">block_relations</text>
+        <text class="s" x="866" y="435">posting_windows · notifications</text>
+        <text class="s" x="866" y="452">ip_bans</text>
+        <text class="t" x="866" y="478">image_objects</text>
+      </g>
+      <text class="s" x="866" y="496">画像本体を bytea で保存</text>
+      <text class="s mid m" x="974" y="528">c5.large · :5432 · 192.168.4.10</text>
+    </svg>
+    </div>
+    <figcaption>全通信が Router を通るため、サーバーは直接つながっていない。国コードが不正なら Router が 400 を返す。App 同士の呼び出しはコードに存在しない。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>往復遅延が積み上がる量</h2>
+  <figure>
+    <div class="scroll">
+      <div class="legend" aria-hidden="true">
+        <span><i class="key" style="background:var(--lan)"></i>asia1（往復 1.2 ms）</span>
+        <span><i class="key" style="background:var(--wan)"></i>europe1 / america1（往復 101 ms）</span>
+      </div>
+      <table class="floor">
+        <thead><tr><th>API</th><th>DB 往復</th><th>待ち時間の下限（クエリ実行時間と画像転送は含まない）</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/images/:id</code></td><td>2 回</td>
+            <td class="bars">
+              <div class="bar-row" title="asia1: 2 往復 × 1.2 ms = 2.4 ms"><div><i class="bar a" style="width:0.24%"></i></div><div class="val">2.4 ms</div></div>
+              <div class="bar-row" title="europe1 / america1: 2 往復 × 101 ms = 202 ms"><div><i class="bar e" style="width:20%"></i></div><div class="val">202 ms</div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><code>GET /api/feeds/friends</code></td><td>7 回</td>
+            <td class="bars">
+              <div class="bar-row" title="asia1: 7 往復 × 1.2 ms = 8.4 ms"><div><i class="bar a" style="width:0.83%"></i></div><div class="val">8.4 ms</div></div>
+              <div class="bar-row" title="europe1 / america1: 7 往復 × 101 ms = 707 ms"><div><i class="bar e" style="width:70%"></i></div><div class="val">707 ms</div></div>
+            </td>
+          </tr>
+          <tr>
+            <td><code>POST /api/posts</code></td><td>10 回</td>
+            <td class="bars">
+              <div class="bar-row" title="asia1: 10 往復 × 1.2 ms = 12 ms"><div><i class="bar a" style="width:1.19%"></i></div><div class="val">12 ms</div></div>
+              <div class="bar-row" title="europe1 / america1: 10 往復 × 101 ms = 1010 ms"><div><i class="bar e" style="width:100%"></i></div><div class="val">1,010 ms</div></div>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <figcaption>コードのクエリ数 × 実測の往復時間で出した試算で、負荷時の実測ではない。友達がいる利用者の場合で数えた。接続 30 本 ÷ 101 ms で、europe1 と america1 は 1 台あたり毎秒約 300 クエリが上限になる。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>通知から投稿、閲覧までの流れ</h2>
+  <figure>
+    <div class="scroll">
+    <svg class="diagram" viewBox="0 0 1100 612" role="img" aria-label="投稿期間の開始で通知が作られ、利用者は SSE で受け取って投稿する。投稿のトランザクションは地域で 1 行の posting_windows を FOR UPDATE でロックしたまま約 5 往復する。">
+      <defs>
+        <marker id="srI" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ai" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="srW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path class="aw" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <rect class="box" x="30" y="14" width="120" height="36" rx="4"/><text class="tb mid" x="90" y="37">管理者（ベンチ）</text>
+      <rect class="box" x="230" y="14" width="120" height="36" rx="4"/><text class="tb mid" x="290" y="37">利用者</text>
+      <rect class="box" x="480" y="14" width="160" height="36" rx="4"/><text class="tb mid" x="560" y="37">App（nginx 経由）</text>
+      <rect class="box" x="730" y="14" width="140" height="36" rx="4"/><text class="tb mid" x="800" y="37">asia2 DB</text>
+      <path class="life" d="M90 50V600M290 50V600M560 50V600M800 50V600"/>
+
+      <!-- 通知 -->
+      <text class="s" x="1088" y="66" text-anchor="end">通知</text><path class="div" d="M12 72H1088"/>
+      <text class="t mid m" x="425" y="92">GET /api/notifications</text>
+      <path class="wire" d="M290 98H559" marker-end="url(#srI)"/>
+      <text class="t mid" x="680" y="122">500 ms ごとに 2 SELECT</text>
+      <path class="wire" d="M560 128H799" marker-end="url(#srI)"/>
+      <text class="s" x="818" y="126">SSE 1 本ごとに続く</text>
+      <text class="t m" x="100" y="152">POST /api/admin/posting-window</text>
+      <path class="wire" d="M90 158H559" marker-end="url(#srI)"/>
+      <text class="s" x="400" y="152">どの App でも受ける</text>
+      <text class="t mid" x="680" y="182">期間を切替 + 通知を一括 INSERT</text>
+      <path class="wire" d="M560 188H799" marker-end="url(#srI)"/>
+      <text class="s" x="818" y="186"><tspan class="m">LOCK users</tspan> の中で地域の全員分を作る</text>
+      <text class="t mid" x="680" y="212">SSE の SELECT が通知行を検出</text>
+      <path class="wire dash" d="M800 218H561" marker-end="url(#srI)"/>
+      <text class="t mid" x="425" y="242">通知を 1 件送って接続を閉じる</text>
+      <path class="wire dash" d="M560 248H291" marker-end="url(#srI)"/>
+
+      <!-- 投稿 -->
+      <text class="s" x="1088" y="266" text-anchor="end">投稿</text><path class="div" d="M12 272H1088"/>
+      <text class="t mid m" x="425" y="294">POST /api/posts</text>
+      <path class="wire" d="M290 300H559" marker-end="url(#srI)"/>
+      <text class="t mid" x="680" y="322">BEGIN · users 行ロック · getUser</text>
+      <path class="wire" d="M560 328H799" marker-end="url(#srI)"/>
+      <text class="tw mid m" x="680" y="350">posting_windows FOR UPDATE</text>
+      <path class="thinw" d="M560 356H793" marker-end="url(#srW)"/>
+      <text class="t mid" x="680" y="376">当日の投稿数を count</text>
+      <path class="wire" d="M560 382H793" marker-end="url(#srI)"/>
+      <text class="t mid m" x="680" y="402">INSERT image_objects</text>
+      <path class="wire" d="M560 408H793" marker-end="url(#srI)"/>
+      <text class="t mid m" x="680" y="428">INSERT posts</text>
+      <path class="wire" d="M560 434H793" marker-end="url(#srI)"/>
+      <text class="t mid" x="680" y="454">投稿を読み直す</text>
+      <path class="wire" d="M560 460H793" marker-end="url(#srI)"/>
+      <text class="tw mid m" x="680" y="480">COMMIT</text>
+      <path class="thinw" d="M560 486H793" marker-end="url(#srW)"/>
+      <rect class="lock" x="794" y="352" width="12" height="138" rx="2"/>
+      <text class="tw" x="822" y="376">地域に 1 行だけのロック</text>
+      <text class="t" x="822" y="398">同じ地域の投稿はここで順番待ち</text>
+      <text class="t" x="822" y="428">保持は約 5 往復</text>
+      <text class="t" x="822" y="450">europe / america で約 500 ms</text>
+      <text class="tw" x="822" y="472">上限は地域あたり約 2 投稿/秒（試算）</text>
+      <text class="t mid" x="425" y="506">201 Created</text>
+      <path class="wire dash" d="M560 512H291" marker-end="url(#srI)"/>
+
+      <!-- 閲覧 -->
+      <text class="s" x="1088" y="526" text-anchor="end">閲覧</text><path class="div" d="M12 532H1088"/>
+      <text class="t mid m" x="425" y="552">GET /api/feeds/friends</text>
+      <path class="wire" d="M290 558H559" marker-end="url(#srI)"/>
+      <text class="t mid" x="680" y="552">7 往復</text>
+      <path class="wire" d="M560 558H799" marker-end="url(#srI)"/>
+      <text class="s" x="818" y="556">有効な期間の投稿を読み、Go で絞り込む</text>
+      <text class="t mid m" x="425" y="584">GET /api/images/:id</text>
+      <path class="wire" d="M290 590H559" marker-end="url(#srI)"/>
+      <text class="t mid" x="680" y="584">2 往復 + 画像本体</text>
+      <path class="wire" d="M560 590H799" marker-end="url(#srI)"/>
+      <text class="s" x="818" y="588">署名は HMAC 1000 回。毎回 DB から返す</text>
+    </svg>
+    </div>
+    <figcaption>投稿の成立後に友達フィードの検証を通ると 10 点、最後の投稿期間なら 20 点になる。期間内に投稿が詰まると、この配点をそのまま失う。ロック保持の時間は計算値で、ベンチでの確認はまだしていない。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>リクエストの関門と BAN の還流</h2>
+  <figure>
+    <div class="scroll">
+    <svg class="diagram" viewBox="0 0 1100 282" role="img" aria-label="リクエストは ActionLog、IPBan、Session、Region、Handler の順に通る。ログは journald を経て isureal-guard に渡り、BAN が ip_bans に書かれ、全 App が 200 ミリ秒ごとに読み直す。">
+      <defs>
+        <marker id="grI" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="ai" d="M0 0 10 5 0 10z"/></marker>
+        <marker id="grW" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path class="aw" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <rect class="box" x="20" y="24" width="170" height="88" rx="5"/>
+      <text class="tb m" x="34" y="47">ActionLog</text>
+      <text class="s" x="34" y="68">応答後に JSON を出力</text>
+      <text class="s" x="34" y="88">全ルートが通る</text>
+      <path class="wire" d="M190 68H229" marker-end="url(#grI)"/>
+
+      <rect class="box" x="230" y="24" width="170" height="88" rx="5"/>
+      <text class="tb m" x="244" y="47">IPBan</text>
+      <text class="s" x="244" y="68">X-Client-IP をメモリで照合</text>
+      <text class="s m" x="244" y="94">403 ip_banned</text>
+      <path class="wire" d="M400 68H439" marker-end="url(#grI)"/>
+
+      <rect class="box" x="440" y="24" width="170" height="88" rx="5"/>
+      <text class="tb m" x="454" y="47">Session</text>
+      <text class="s" x="454" y="68">Bearer を SHA-256 で照合</text>
+      <text class="s m" x="454" y="94">401 invalid_session</text>
+      <path class="wire" d="M610 68H649" marker-end="url(#grI)"/>
+
+      <rect class="box" x="650" y="24" width="170" height="88" rx="5"/>
+      <text class="tb m" x="664" y="47">Region</text>
+      <text class="s" x="664" y="68">所属地域と App を比較</text>
+      <text class="s m" x="664" y="94">403 region_mismatch</text>
+      <path class="wire" d="M820 68H859" marker-end="url(#grI)"/>
+
+      <rect class="box" x="860" y="24" width="220" height="88" rx="5"/>
+      <text class="tb m" x="874" y="47">Handler</text>
+      <text class="s" x="874" y="68">API 本体</text>
+      <text class="s" x="874" y="94">複数回の SQL を発行する</text>
+
+      <path class="wire" d="M105 112V190" marker-end="url(#grI)"/>
+      <text class="s" x="113" y="155">JSON 1 行</text>
+
+      <rect class="box" x="20" y="190" width="170" height="72" rx="5"/>
+      <text class="tb m" x="34" y="214">journald</text>
+      <text class="s m" x="34" y="236">isureal-*.service</text>
+      <path class="wire" d="M190 226H269" marker-end="url(#grI)"/>
+      <text class="s mid m" x="230" y="218">journalctl</text>
+
+      <rect class="box" x="270" y="190" width="320" height="72" rx="5"/>
+      <text class="tb m" x="284" y="214">isureal-guard</text>
+      <text class="s" x="284" y="236">同じ IP の失敗を数える</text>
+      <text class="s" x="440" y="210">ログイン 401: 10 回/10 秒</text>
+      <text class="s" x="440" y="230">不正な画像 400: 2 回/5 秒</text>
+      <text class="s" x="440" y="250">不正な署名 403: 3 回/5 秒</text>
+      <path class="wire" d="M590 226H649" marker-end="url(#grI)"/>
+      <text class="s mid m" x="620" y="218">INSERT</text>
+
+      <rect class="box" x="650" y="190" width="250" height="72" rx="5"/>
+      <text class="tb m" x="664" y="214">ip_bans（asia2）</text>
+      <text class="s" x="664" y="236">BAN は 2 分 · 初期化で TRUNCATE</text>
+
+      <path class="thinw" d="M775 190V150H315V113" marker-end="url(#grW)"/>
+      <text class="tw mid" x="545" y="142">全 App が 200 ms ごとに SELECT</text>
+    </svg>
+    </div>
+    <figcaption><code>GET /api/images/:id</code> は Session と Region を通らず、URL の署名で守る。<code>isureal-guard</code> はリポジトリの外にあり、App の 3 台で 1 つずつ動く。<code>ISUREAL_LOG_LEVEL</code> が未設定なので既定の debug で動き、GET の成功も全件 journald に流れる。Guard の検知対象の 3 種は info 以上で出る。</figcaption>
+  </figure>
+</section>
+
+<section>
+  <h2>変えてよい範囲</h2>
+  <div class="two">
+    <div>
+      <h3>変更できる</h3>
+      <ul class="lines">
+        <li>サーバー内のソフトウェアと実装言語。</li>
+        <li>DB スキーマ、インデックス、保存方式。</li>
+        <li>キャッシュや複製先の追加（初期化で作り直す）。</li>
+      </ul>
+    </div>
+    <div>
+      <h3>守る</h3>
+      <ul class="lines">
+        <li>固定リージョンと Router 経由の通信。遅延と帯域制限は回避しない。</li>
+        <li>書き込み後の読み取りは、地域をまたいでも結果を反映する。</li>
+        <li>猶予は削除した投稿の画像の 5 秒だけ。</li>
+        <li>再起動後もデータを読める状態にする。追試で確認される。</li>
+        <li><code>sql/001-schema.sql</code> は流さない。全テーブルを DROP して、初期データを戻せなくなる。</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h2>根拠と未確認の点</h2>
+  <div class="scroll">
+    <table class="plain">
+      <thead><tr><th>内容</th><th>根拠</th></tr></thead>
+      <tbody>
+        <tr><td>Router の転送表、スコア倍率、禁止事項</td><td><a href="https://portal.isucon.net/docs">当日マニュアル</a></td></tr>
+        <tr><td>往復時間 1.2 ms / 101 ms</td><td>各 App から <code>192.168.4.10</code> へ ping と TCP 接続で実測（10:27 JST、ベンチ負荷なし）</td></tr>
+        <tr><td>サービスの構成、接続先、nginx 設定</td><td>4 台に SSH して読み取りのみで確認（nginx 設定は App 3 台で同一）</td></tr>
+        <tr><td>ルートとミドルウェアの順序</td><td><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/server.go">go/server.go</a></td></tr>
+        <tr><td>投稿のロックとクエリ数</td><td><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/post_api.go">go/post_api.go</a>、<a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/feed_api.go">go/feed_api.go</a>、<a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/image_api.go">go/image_api.go</a></td></tr>
+        <tr><td>画像と SSE の実装</td><td><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/image_signature.go">go/image_signature.go</a>、<a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/notification_api.go">go/notification_api.go</a></td></tr>
+        <tr><td>テーブルと初期化</td><td><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/sql/001-schema.sql">sql/001-schema.sql</a>、<a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/sql/reset.sql">sql/reset.sql</a></td></tr>
+        <tr><td>BAN の条件</td><td>競技サーバーの <code>/opt/isureal-guard/src/guard.go</code></td></tr>
+        <tr><td>未確認</td><td>帯域制限の値。負荷時の往復時間。ボトルネックの順位（ベンチの計測がまだ無い）。Router の内部設定（ログイン禁止）。</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+</div>
+</body>
+</html>

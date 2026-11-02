@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>画像署名のしくみ</title>
+<style>
+/* レイアウト: 1 カラムの読み物。図 → 一言の説明の繰り返し。強調色は「重い計算」の琥珀 1 色だけ */
+:root{
+  --bg:#f6f7f9; --surface:#ffffff; --fg:#1b2230; --muted:#5b6578; --line:#d9dee7;
+  --accent:#2f5bd0; --hot:#c8650a; --hot-bg:#fbe9d6; --ok:#1f7a55; --ok-bg:#dff1e8;
+  --bar:#aab4c6; --code-bg:#eceff4;
+  --font:"Hiragino Sans","Hiragino Kaku Gothic ProN","Yu Gothic","Noto Sans JP",system-ui,sans-serif;
+  --mono:ui-monospace,"SF Mono",Menlo,Consolas,monospace;
+  color-scheme:light;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#10141c; --surface:#181e2a; --fg:#e6eaf2; --muted:#9aa5ba; --line:#2c3445;
+    --accent:#7ea3ff; --hot:#f0a05a; --hot-bg:#3a2a18; --ok:#6fd3a5; --ok-bg:#16322a;
+    --bar:#4a566e; --code-bg:#222a39; color-scheme:dark;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#10141c; --surface:#181e2a; --fg:#e6eaf2; --muted:#9aa5ba; --line:#2c3445;
+  --accent:#7ea3ff; --hot:#f0a05a; --hot-bg:#3a2a18; --ok:#6fd3a5; --ok-bg:#16322a;
+  --bar:#4a566e; --code-bg:#222a39; color-scheme:dark;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--font);font-size:16px;line-height:1.75;
+  padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));padding-block:32px 64px}
+main{max-width:860px;margin:0 auto;display:flex;flex-direction:column;gap:40px}
+h1{font-size:1.9rem;line-height:1.3;margin:0 0 8px;text-wrap:balance}
+h2{font-size:1.25rem;margin:0 0 12px;text-wrap:balance}
+p{margin:0 0 6px}
+.meta{color:var(--muted);font-size:.85rem}
+.tldr{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:18px 20px}
+.tldr h2{font-size:.8rem;letter-spacing:.12em;color:var(--muted);margin-bottom:8px}
+.tldr p{font-size:1.05rem}
+code{font-family:var(--mono);font-size:.88em;background:var(--code-bg);padding:1px 5px;border-radius:4px;overflow-wrap:anywhere}
+figure{margin:12px 0 0;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px}
+figure .scroll{overflow-x:auto}
+figure svg{display:block;width:100%;min-width:560px;height:auto;color:var(--fg)}
+figcaption{margin-top:8px;color:var(--muted);font-size:.88rem}
+ul{margin:6px 0 0;padding-left:1.2em}
+li{margin:2px 0}
+.hot{color:var(--hot);font-weight:700}
+.tag{display:inline-block;font-size:.75rem;padding:1px 8px;border-radius:999px;font-weight:700;white-space:nowrap}
+.tag.hot{background:var(--hot-bg);color:var(--hot)}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+/* 棒グラフ */
+.bars{display:flex;flex-direction:column;gap:10px;margin-top:4px}
+.bar{display:grid;grid-template-columns:minmax(150px,230px) 1fr 56px;gap:10px;align-items:center;font-size:.9rem}
+.bar .name{min-width:0;overflow-wrap:anywhere}
+.bar .track{height:14px;background:var(--code-bg);border-radius:3px}
+.bar .fill{height:100%;border-radius:3px;background:var(--bar)}
+.bar.top .fill{background:var(--hot)}
+.bar .val{text-align:right;font-variant-numeric:tabular-nums;font-weight:700}
+@media (max-width:520px){.bar{grid-template-columns:1fr 56px}.bar .track{grid-column:1 / -1;grid-row:2}}
+/* 表 */
+.tablewrap{overflow-x:auto;margin-top:8px}
+table{border-collapse:collapse;width:100%;min-width:640px;font-size:.92rem;background:var(--surface);border:1px solid var(--line)}
+th,td{border-bottom:1px solid var(--line);padding:10px 12px;text-align:left;vertical-align:top}
+th{font-size:.78rem;letter-spacing:.06em;color:var(--muted);background:var(--code-bg)}
+.small{font-size:.88rem;color:var(--muted)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>画像署名のしくみ</h1>
+  <p class="meta">ISUReal（ISUCON2026）/ 2026-10-31 13:40 JST 時点 / asia1 の CPU を食っている正体の説明</p>
+</header>
+
+<section class="tldr" aria-labelledby="tldr">
+  <h2 id="tldr">TL;DR</h2>
+  <p>画像 URL には「改ざん防止の署名」が付いている。</p>
+  <p>署名は HMAC-SHA256 を <b>1000 回連鎖</b>させる重い計算。</p>
+  <p>レスポンスに画像が並ぶたびに計算していて、asia1 の CPU の <span class="hot">約 55%</span> を使っている。</p>
+  <p>署名の形式は変えられない。減らせるのは「計算する回数」と「計算する場所」だけ。</p>
+  <p>暇な europe1 / america1 に計算を任せる案が、いちばん有望。</p>
+</section>
+
+<section aria-labelledby="flow">
+  <h2 id="flow">1. 署名は 2 か所で計算される</h2>
+  <p>作る側は、レスポンスを組み立てるとき。</p>
+  <p>検証する側は、画像を取りに来たとき。</p>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 720 440" role="img" aria-label="ベンチ、asia1、asia2 の間で、フィード取得時に署名を作り、画像取得時に署名を検証する流れ">
+      <defs>
+        <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+          <path d="M0 0 L10 5 L0 10 z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <!-- lifelines -->
+      <g fill="none" stroke="currentColor" stroke-opacity=".35" stroke-dasharray="4 4">
+        <line x1="90" y1="60" x2="90" y2="430"/><line x1="340" y1="60" x2="340" y2="430"/><line x1="630" y1="60" x2="630" y2="430"/>
+      </g>
+      <g font-size="13" font-weight="700" text-anchor="middle" fill="currentColor">
+        <rect x="30" y="16" width="120" height="36" rx="6" fill="none" stroke="currentColor"/><text x="90" y="39">ベンチ</text>
+        <rect x="270" y="16" width="140" height="36" rx="6" fill="none" stroke="currentColor"/><text x="340" y="39">asia1（アプリ）</text>
+        <rect x="570" y="16" width="120" height="36" rx="6" fill="none" stroke="currentColor"/><text x="630" y="39">asia2（DB）</text>
+      </g>
+      <g font-size="12.5" fill="currentColor">
+        <!-- 1 -->
+        <line x1="92" y1="96" x2="338" y2="96" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="100" y="88">① GET /api/feeds（投稿が並ぶ）</text>
+        <!-- 2 作る -->
+        <rect x="348" y="108" width="270" height="44" rx="6" fill="var(--hot-bg)" stroke="var(--hot)"/>
+        <text x="358" y="127" fill="var(--hot)" font-weight="700">署名を作る（画像 1 枚ごと）</text>
+        <text x="358" y="144">HMAC × 1000 回 ／ 5 分以内の発行済みなら省略</text>
+        <!-- 3 -->
+        <line x1="338" y1="190" x2="92" y2="190" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="100" y="182">② JSON に imageUrl = /api/images/ID?exp=…&amp;sig=…</text>
+        <!-- 4 -->
+        <line x1="92" y1="238" x2="338" y2="238" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="100" y="230">③ GET /api/images/ID?exp=…&amp;sig=…</text>
+        <!-- 5 検証 -->
+        <rect x="348" y="250" width="270" height="44" rx="6" fill="var(--hot-bg)" stroke="var(--hot)"/>
+        <text x="358" y="269" fill="var(--hot)" font-weight="700">署名を検証する</text>
+        <text x="358" y="286">同じ式で再計算して比べる（検証済みなら省略）</text>
+        <!-- 6 DB -->
+        <line x1="342" y1="330" x2="628" y2="330" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="352" y="322">④ 持ち主の鍵・削除状態を確認</text>
+        <line x1="628" y1="356" x2="342" y2="356" stroke="currentColor" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ar)"/>
+        <text x="352" y="374" fill="var(--muted)">鍵と alive（RTT 約 1ms）</text>
+        <!-- 7 -->
+        <line x1="338" y1="414" x2="92" y2="414" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar)"/>
+        <text x="100" y="406">⑤ 200（画像）／ 署名不正・期限切れ・削除済みは 403</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>琥珀色の箱が、HMAC を 1000 回回す場所。どちらも asia1 の CPU で動く。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="chain">
+  <h2 id="chain">2. 署名の中身</h2>
+  <p>入力は、画像の持ち主の秘密鍵・<code>exp</code>（期限）・<code>image_id</code> の 3 つだけ。</p>
+  <p>誰が見ても、同じ画像・同じ <code>exp</code> なら署名は同じ。</p>
+  <p>HMAC 1 回は SHA-256 のブロック計算が 2 回。1000 回で約 2000 回になる。</p>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 720 130" role="img" aria-label="exp:image_id を HMAC に 1000 回通して 32 バイトの署名にする連鎖">
+      <defs><marker id="ar2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+      <g font-size="12.5" fill="currentColor" text-anchor="middle">
+        <rect x="8" y="40" width="120" height="44" rx="6" fill="none" stroke="currentColor"/>
+        <text x="68" y="59">入力</text><text x="68" y="76" font-family="var(--mono)">exp:image_id</text>
+        <line x1="130" y1="62" x2="170" y2="62" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <rect x="172" y="40" width="96" height="44" rx="6" fill="var(--hot-bg)" stroke="var(--hot)"/>
+        <text x="220" y="59" fill="var(--hot)" font-weight="700">HMAC</text><text x="220" y="76">鍵 = 持ち主</text>
+        <line x1="270" y1="62" x2="304" y2="62" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <rect x="306" y="40" width="64" height="44" rx="6" fill="none" stroke="currentColor"/><text x="338" y="67">32 B</text>
+        <line x1="372" y1="62" x2="406" y2="62" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <rect x="408" y="40" width="96" height="44" rx="6" fill="var(--hot-bg)" stroke="var(--hot)"/>
+        <text x="456" y="59" fill="var(--hot)" font-weight="700">HMAC</text><text x="456" y="76">同じ鍵</text>
+        <line x1="506" y1="62" x2="538" y2="62" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <text x="560" y="67" font-size="18">…</text>
+        <line x1="582" y1="62" x2="614" y2="62" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar2)"/>
+        <rect x="616" y="40" width="96" height="44" rx="6" fill="none" stroke="currentColor" stroke-width="2"/>
+        <text x="664" y="59" font-weight="700">sig</text><text x="664" y="76">URL に載る</text>
+        <path d="M172 100 H504" stroke="currentColor" stroke-opacity=".5" fill="none"/>
+        <text x="338" y="120" fill="var(--muted)">この 2 つの箱を合計 1000 回くり返す（前の出力を次の入力にする）</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>前の出力が次の入力になる連鎖なので、1 回の署名の中は並列化できない。</figcaption>
+  </figure>
+</section>
+
+<section aria-labelledby="cpu">
+  <h2 id="cpu">3. CPU はどこに消えているか</h2>
+  <p>ベンチ #12618（32326 点）の asia1、CPU プロファイル 60 秒。</p>
+  <p>割合は「呼び出し先を含む」値。重なるので足し算にならない。</p>
+  <figure>
+    <div class="bars" role="list">
+      <div class="bar top" role="listitem"><span class="name">署名そのもの <code>imageSignature</code></span><span class="track"><span class="fill" style="display:block;width:54.8%"></span></span><span class="val">54.8%</span></div>
+      <div class="bar" role="listitem"><span class="name">Memories 一覧</span><span class="track"><span class="fill" style="display:block;width:29%"></span></span><span class="val">29.0%</span></div>
+      <div class="bar" role="listitem"><span class="name">投稿のレスポンス作り</span><span class="track"><span class="fill" style="display:block;width:22.4%"></span></span><span class="val">22.4%</span></div>
+      <div class="bar" role="listitem"><span class="name">RealMoji のレスポンス作り</span><span class="track"><span class="fill" style="display:block;width:19.4%"></span></span><span class="val">19.4%</span></div>
+      <div class="bar" role="listitem"><span class="name">画像の取得（検証側）</span><span class="track"><span class="fill" style="display:block;width:16.7%"></span></span><span class="val">16.7%</span></div>
+      <div class="bar" role="listitem"><span class="name">エクスポート</span><span class="track"><span class="fill" style="display:block;width:15.3%"></span></span><span class="val">15.3%</span></div>
+    </div>
+    <figcaption>sha256 の計算だけで全体の 40%。署名の計算回数を減らすのが、いちばん素直な CPU 削減。</figcaption>
+  </figure>
+  <p class="small">1 回の署名は約 0.4ms と推定（未実測）。60 秒で 9 万回前後になる計算。</p>
+</section>
+
+<section aria-labelledby="cache">
+  <h2 id="cache">4. 今のキャッシュ</h2>
+  <ul>
+    <li>(持ち主の鍵, image_id) ごとに、発行した URL を <b>5 分</b>使い回す。</li>
+    <li>起動時に、新しい投稿 9 万件ぶんの署名を先に作る（ウォームアップ）。</li>
+    <li>asia の投稿は約 62 万件。古い投稿を引く Memories / エクスポートは、ここから外れやすい。</li>
+    <li>ベンチは約 2 分なので、走行中に 5 分の期限が切れることはない。</li>
+    <li>PR #118 で、前の走行が作った分を <code>/api/initialize</code> で捨てる（再起動直後と同じ状態で測るため）。</li>
+  </ul>
+</section>
+
+<section aria-labelledby="idea">
+  <h2 id="idea">5. 暇な 2 台に計算を任せる案</h2>
+  <p>europe1 / america1 は CPU 5% で暇。しかも SHA 拡張付きの新しい CPU。</p>
+  <p>asia1 は SHA 拡張なしの c5。</p>
+  <p>署名は入力だけで決まるので、別のサーバーで計算しても結果は同じ。</p>
+  <figure>
+    <div class="scroll">
+    <svg viewBox="0 0 720 300" role="img" aria-label="asia1 がルーター経由で europe1 と america1 に署名の計算を依頼し、結果を受け取る構成案">
+      <defs><marker id="ar3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="currentColor"/></marker></defs>
+      <g font-size="12.5" fill="currentColor" text-anchor="middle">
+        <!-- asia1 -->
+        <rect x="20" y="100" width="150" height="70" rx="8" fill="var(--hot-bg)" stroke="var(--hot)"/>
+        <text x="95" y="124" font-weight="700" fill="var(--hot)">asia1</text>
+        <text x="95" y="143">CPU 99%</text><text x="95" y="160">利用者はここに来る</text>
+        <!-- DB -->
+        <rect x="20" y="230" width="150" height="46" rx="8" fill="none" stroke="currentColor"/>
+        <text x="95" y="250" font-weight="700">asia2（DB）</text><text x="95" y="267">RTT 約 1ms</text>
+        <line x1="95" y1="172" x2="95" y2="228" stroke="currentColor" stroke-width="1.5" marker-end="url(#ar3)"/>
+        <!-- router -->
+        <rect x="290" y="112" width="120" height="46" rx="23" fill="none" stroke="currentColor" stroke-dasharray="5 4"/>
+        <text x="350" y="140" font-weight="700">ルーター</text>
+        <!-- europe1 -->
+        <rect x="540" y="30" width="160" height="70" rx="8" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="620" y="54" font-weight="700" fill="var(--ok)">europe1</text>
+        <text x="620" y="73">CPU 5%・SHA 拡張あり</text><text x="620" y="90">署名だけ計算する</text>
+        <!-- america1 -->
+        <rect x="540" y="170" width="160" height="70" rx="8" fill="var(--ok-bg)" stroke="var(--ok)"/>
+        <text x="620" y="194" font-weight="700" fill="var(--ok)">america1</text>
+        <text x="620" y="213">CPU 5%・SHA 拡張あり</text><text x="620" y="230">署名だけ計算する</text>
+        <!-- links -->
+        <g stroke="currentColor" stroke-width="1.5" fill="none">
+          <line x1="172" y1="128" x2="288" y2="132" marker-end="url(#ar3)"/>
+          <line x1="412" y1="124" x2="538" y2="72" marker-end="url(#ar3)"/>
+          <line x1="412" y1="148" x2="538" y2="196" marker-end="url(#ar3)"/>
+        </g>
+        <text x="228" y="118">依頼</text>
+        <text x="468" y="82">image_id を</text><text x="468" y="96">まとめて渡す</text>
+        <text x="468" y="190" >署名が返る</text>
+        <text x="360" y="200" fill="var(--hot)" font-weight="700">往復 約 100ms</text>
+        <text x="360" y="218" fill="var(--muted)">ミスしたリクエストにだけ乗る</text>
+      </g>
+    </svg>
+    </div>
+    <figcaption>3 台とも private IP でつなぐ。通信はルーター経由なので、禁止の「迂回」には当たらない見込み。</figcaption>
+  </figure>
+  <p class="small">確認済み: 4 台の間は RTT 約 100.8ms。20MB の送信は 2.55 秒（約 8MB/s）。</p>
+</section>
+
+<section aria-labelledby="opts">
+  <h2 id="opts">6. 案の比較</h2>
+  <div class="tablewrap">
+  <table>
+    <thead><tr><th>案</th><th>効果</th><th>弱点</th><th>人の判断</th></tr></thead>
+    <tbody>
+      <tr><td><b>A</b> ミス分を europe1 / america1 にまとめて依頼</td><td>asia1 の署名 CPU を直接減らす</td><td>ミスしたリクエストに +100ms。落ちたら自前計算へ戻す処理が要る</td><td><span class="tag ok">不要</span></td></tr>
+      <tr><td><b>B</b> 暇な 2 台が全件（62 万）を先に作って asia1 に送る</td><td>走行中の計算がほぼ消える。90MB は約 11 秒で送れる計算</td><td>送った分の期限（5 分）が切れる。再起動直後に間に合わせる設計が要る</td><td><span class="tag hot">要判断</span></td></tr>
+      <tr><td><b>C</b> <code>exp</code> を時間の区切りに揃えて使い回す</td><td>同じ画像の署名が長く使える</td><td>期限が 24h → 最短 23h に縮む。「期限の形式」を変えたと見られる恐れ</td><td><span class="tag hot">要判断</span></td></tr>
+      <tr><td><b>D</b> 投稿時に非同期で署名する</td><td>新しい投稿だけ速くなる</td><td>投稿は 60 秒で 231 件だけ。CPU の大半は古い投稿の閲覧</td><td><span class="tag ok">不要</span>（効果小）</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="small">レギュレーション: 署名と期限の形式・検証結果は変えない（マニュアル「画像URLの検証」）。</p>
+</section>
+
+<section aria-labelledby="next">
+  <h2 id="next">7. 次にやること</h2>
+  <ul>
+    <li>PR #118 をデプロイして、冷えた状態の点数を取る。</li>
+    <li>ヒット数・ミス数・ウォームアップ件数のカウンタを足す（原因の切り分け）。</li>
+    <li>案 A の差分を分割して実装する（内部 API → asia1 側の呼び出し → 効果の検証）。</li>
+  </ul>
+</section>
+
+<section aria-labelledby="refs">
+  <h2 id="refs">参照</h2>
+  <ul>
+    <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/image_signature.go">go/image_signature.go（署名とキャッシュ）</a></li>
+    <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/blob/main/go/image_api.go">go/image_api.go（検証側）</a></li>
+    <li><a href="https://github.com/HirokiYoshida837/isucon2026-20261031/pull/118">PR #118（走行間のキャッシュを捨てる）</a></li>
+    <li><a href="https://portal.isucon.net/contestant/benchmark_jobs/12618">ベンチ #12618（32326 点）</a></li>
+  </ul>
+</section>
+
+</main>
+</body>
+</html>
